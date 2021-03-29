@@ -11,7 +11,7 @@ int main()
 {
 	// loading old BIG --------------
 	TBIG T;
-	std::string filename = "F:/akademie_ved/MAM2014_001.big";
+	std::string filename = "F:/vita_skola/BIGFiles/old/fabric106_uniform_V2.big";
 	int status = T.load(filename.c_str(), true); // true = memory, false = disk
 	if (status < 0)
 		exit(0);
@@ -40,10 +40,10 @@ int main()
 				}
 			bigW.pushEntity(data, big::DataTypes::FLOAT);
 		}
-		bigW.AddAttributeToXmlInt("method", 1, "uniform");
+		/*bigW.AddAttributeToXmlInt("method", 1, "uniform");
 		bigW.AddAttributeToXmlBool("isDark", false, "is this material dark");
 		bigW.AddAttributeToXmlDouble("opacity", 21.15, "opacity of this material");
-		bigW.AddAttributeToXmlString("data", "uniform", "Data are uniform");
+		bigW.AddAttributeToXmlString("data", "uniform", "Data are uniform");*/
 
 	}
 
@@ -52,8 +52,8 @@ int main()
 		big::BigCoreRead bigR("fabric106_uniform_V2.big", false);
 		printf("height,width: %d %d\n", bigR.getImageHeight(), bigR.getImageWidth());
 		printf("entities,images,planes: %d %d %d\n", bigR.getNumberOfEntities(), bigR.getNumberOfImages(), bigR.getNumberOfPlanes());
-		std::string str = bigR.readXMLString("data");
-		printf("XML: method %d opacity %f data %s\n", bigR.readXMLInt("method"), (float)bigR.readXMLDouble("opacity"), str.c_str());
+		/*std::string str = bigR.readXMLString("data");
+		printf("XML: method %d opacity %f data %s\n", bigR.readXMLInt("method"), (float)bigR.readXMLDouble("opacity"), str.c_str());*/
 
 	}
 }
