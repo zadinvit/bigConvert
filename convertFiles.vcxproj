@@ -151,12 +151,15 @@
   <ItemGroup>
     <ClCompile Include="lodepng.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="pugixml.cpp" />
     <ClCompile Include="TAlloc.cpp" />
     <ClCompile Include="TBIG.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="half.h" />
     <ClInclude Include="lodepng.h" />
+    <ClInclude Include="pugiconfig.hpp" />
+    <ClInclude Include="pugixml.hpp" />
     <ClInclude Include="readexr.h" />
     <ClInclude Include="TAlloc.h" />
     <ClInclude Include="TBIG.h" />

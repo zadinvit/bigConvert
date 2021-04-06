@@ -8,7 +8,7 @@
 #include "opencv2/core.hpp"
 #include "opencv2/highgui.hpp"
 #include "opencv2/imgproc.hpp"
-
+#include "pugixml.hpp"
 
 #include "TBIG.h"
 
@@ -16,6 +16,41 @@
 #define UNIFORM 0 
 
 using namespace cv;
+pugi::xml_document doc;
+
+template <typename T>
+std::string ToString(T const& in_val)
+{
+	return std::to_string(in_val);
+}
+// Specialization for boolean type to force "true"/"false"
+template<>
+std::string ToString(bool const& in_val)
+{
+	std::ostringstream oss;
+	oss << std::boolalpha << in_val;
+	return oss.str();
+}
+
+//write xml to string write
+struct xml_string_writer : pugi::xml_writer
+{
+	std::string result;
+
+	virtual void write(const void* data, size_t size)
+	{
+		result.append(static_cast<const char*>(data), size);
+	}
+};
+
+//xml node to string
+std::string node_to_string(pugi::xml_node node)
+{
+	xml_string_writer writer;
+	node.print(writer);
+
+	return writer.result;
+}
 
 void createMipMapWithInfo(shared_ptr<float>& data, const int& rows, const int& cols, shared_ptr<float>& output, std::vector<std::pair<int, int>> &levels, std::vector<std::pair<int, int>> &sizes) {
 	Mat img = Mat(rows, cols, CV_32FC3, data.get());
@@ -104,6 +139,40 @@ void createMipMap(shared_ptr<float>& data, const int& rows, const int& cols, sha
 }
 
 
+void addLevelsToXML(std::vector<std::pair<int, int>>& lvls, std::vector<std::pair<int, int>>& sizes) {
+	pugi::xml_node root = doc.document_element();
+	pugi::xml_node mipmap = root.append_child("mipmap");
+	pugi::xml_node levels = mipmap.append_child("levels");
+	levels.append_attribute("count") = lvls.size();
+	for(int i =0; i<lvls.size(); i++){
+		pugi::xml_node level = levels.append_child("level");
+		pugi::xml_node size = level.append_child("size");
+		size.append_attribute("cols") = sizes[i].first;
+		size.append_attribute("rows") = sizes[i].second;
+		pugi::xml_node origin = level.append_child("origin");
+		origin.append_attribute("x") = lvls[i].first;
+		origin.append_attribute("y") = lvls[i].second;
+	}
+
+}
+
+//save xml to BIG
+void writeXMLtoBig(big::BigCoreWrite &bigW) {
+
+	std::string xmlString = node_to_string(doc.document_element());
+	bigW.writeXML(xmlString);
+	//std::cout << xmlString << std::endl;
+}
+
+
+void controlReading(std::string filename) {
+	big::BigCoreRead bigR(filename, false);
+	printf("height,width: %d %d\n", bigR.getImageHeight(), bigR.getImageWidth());
+	printf("entities,images,planes: %d %d %d\n", bigR.getNumberOfEntities(), bigR.getNumberOfImages(), bigR.getNumberOfPlanes());
+	std::cout << bigR.getXMLFile() << std::endl;
+}
+
+
 int main()
 {
 	std::ifstream configfile("config.txt");
@@ -111,6 +180,13 @@ int main()
 		std::cout << "Config file missing" << std::endl;
 		return -1;
 	}
+
+	auto declarationNode = doc.append_child(pugi::node_declaration);
+	declarationNode.append_attribute("version") = "1.0";
+	declarationNode.append_attribute("encoding") = "ISO-8859-1";
+	declarationNode.append_attribute("standalone") = "yes";
+	auto root = doc.append_child("BigFile");
+
 	std::string line;
 	std::getline(configfile, line);
 	std::istringstream iss(line);
@@ -120,6 +196,12 @@ int main()
 	if (!(iss >> text >> ubo)) {
 		std::cout << "UBO parse error" << std::endl;
 		return -1;
+	}
+	auto type = root.append_child("type");
+	if (ubo) {
+		type.append_child(pugi::node_pcdata).set_value("UBO");
+	} else {
+		type.append_child(pugi::node_pcdata).set_value("uniform");
 	}
 	std::getline(configfile, line);
 	bool mipmap;
@@ -193,26 +275,14 @@ int main()
 					
 				}
 				if (mipmap) {
-					//cout mipmap infor
-					for (auto& lvl : levels) {
-						std::cout << "(" << lvl.first << ", " << lvl.second << ") ";
-					}
-					std::cout << std::endl;
-
-					for (auto& size : sizes) {
-						std::cout << "(" << size.first << ", " << size.second << ") ";
-					}
-					std::cout << std::endl;
+					addLevelsToXML(levels, sizes);
 				}
+				writeXMLtoBig(bigW);
 			}
 
 			// control reading ------------------------------------
-			{
-				big::BigCoreRead bigR(filename, false);
-				printf("height,width: %d %d\n", bigR.getImageHeight(), bigR.getImageWidth());
-				printf("entities,images,planes: %d %d %d\n", bigR.getNumberOfEntities(), bigR.getNumberOfImages(), bigR.getNumberOfPlanes());
-
-			}
+			controlReading(filename);
+			
 		} else // UBO sampling
 		{
 			std::string lFilename = filename + ".big";
@@ -266,26 +336,16 @@ int main()
 							createMipMap(data, nr, nc, mipmap);
 						bigW.pushEntity(mipmap, big::DataTypes::FLOAT);
 					}
-				if (mipmap) {
-					//cout mipmap infor
-					for (auto& lvl : levels) {
-						std::cout << "(" << lvl.first << ", " << lvl.second << ") ";
-					}
-					std::cout << std::endl;
 
-					for (auto& size : sizes) {
-						std::cout << "(" << size.first << ", " << size.second << ") ";
-					}
-					std::cout << std::endl;
-				}
+				if (mipmap)
+					addLevelsToXML(levels, sizes);
+				//save xml to BIG
+				writeXMLtoBig(bigW);
 			}
 			// control reading ------------------------------------
-			{
-				big::BigCoreRead bigR(filename.c_str(), false);
-				printf("height,width: %d %d\n", bigR.getImageHeight(), bigR.getImageWidth());
-				printf("entities,images,planes: %d %d %d\n", bigR.getNumberOfEntities(), bigR.getNumberOfImages(), bigR.getNumberOfPlanes());
-			}
+			controlReading(filename);
 
 		}
+		std::cout << "Saving result: " << doc.save_file("output.xml") << std::endl;
 	}
 }
