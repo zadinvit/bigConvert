@@ -12,8 +12,6 @@
 
 #include "TBIG.h"
 
-#define UBO 1
-#define UNIFORM 0 
 
 using namespace cv;
 pugi::xml_document doc;
@@ -346,6 +344,6 @@ int main()
 			controlReading(filename);
 
 		}
-		std::cout << "Saving result: " << doc.save_file("output.xml") << std::endl;
+		//std::cout << "Saving result: " << doc.save_file("output.xml") << std::endl;
 	}
 }
