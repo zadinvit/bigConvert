@@ -1,3 +1,5 @@
-isUBO: 0
-generate_mipmap: 1
-F:\vita_skola\convertFiles\fabric106_uniform
+isUBO: 1
+generate_mipmap: 0
+F:\vita_skola\convertFiles\MAM2014_016
+F:\vita_skola\convertFiles\MAM2014_011
+F:\vita_skola\convertFiles\MAM2014_007

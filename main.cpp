@@ -2,80 +2,48 @@
 #include <fstream>
 #include <cstring>
 
-#include "big_core_write.hpp"
-#include "big_core_read.hpp"
+#include "MIFbtf.hpp"
+#include "Image.hpp"
 
 #include "opencv2/core.hpp"
 #include "opencv2/highgui.hpp"
 #include "opencv2/imgproc.hpp"
 #include "pugixml.hpp"
 
+using namespace mif;
+using namespace mif::directions;
+using namespace mif::mipmap;
 #include "TBIG.h"
 
 
 using namespace cv;
 pugi::xml_document doc;
 
-template <typename T>
-std::string ToString(T const& in_val)
-{
-	return std::to_string(in_val);
-}
-// Specialization for boolean type to force "true"/"false"
-template<>
-std::string ToString(bool const& in_val)
-{
-	std::ostringstream oss;
-	oss << std::boolalpha << in_val;
-	return oss.str();
-}
 
-//write xml to string write
-struct xml_string_writer : pugi::xml_writer
-{
-	std::string result;
 
-	virtual void write(const void* data, size_t size)
-	{
-		result.append(static_cast<const char*>(data), size);
-	}
-};
-
-//xml node to string
-std::string node_to_string(pugi::xml_node node)
-{
-	xml_string_writer writer;
-	node.print(writer);
-
-	return writer.result;
-}
-
-void createMipMapWithInfo(shared_ptr<float>& data, const int& rows, const int& cols, shared_ptr<float>& output, std::vector<std::pair<int, int>> &levels, std::vector<std::pair<int, int>> &sizes) {
+void createMipMapWithInfo(shared_ptr<float>& data, const int& rows, const int& cols, shared_ptr<float>& output, Mipmap & mip) {
 	Mat img = Mat(rows, cols, CV_32FC3, data.get());
 	img.convertTo(img, CV_32FC3, 1 / 255.0);
-	Mat mipmap = Mat::zeros(Size((img.cols) * 3 / 2, img.rows), CV_32FC3);
+	Mat mipmap = Mat::zeros(Size(((img.cols) * 3 / 2)+1, img.rows), CV_32FC3);
 	img.copyTo(mipmap(cv::Rect(0, 0, img.cols, img.rows)));
 	int row = 0;
 	int level = 1;
 	while (true) {
 		Mat img2;
 		resize(img, img2, Size(), pow(0.5,level), pow(0.5, level), INTER_AREA);
-		levels.push_back(std::make_pair(img.cols, row));
-		sizes.push_back(std::make_pair(img2.cols, img2.rows));
+		mip.isotropic.push_back(Item(img.cols, row, img2.cols, img2.rows));
 		img2.copyTo(mipmap(cv::Rect(img.cols, row, img2.cols, img2.rows)));
 		//handle rectangle object special cases
 		if (img2.rows <= 1 || img2.cols <= 1) {
 			if (img2.cols > 1) {
 				row += img2.rows;
 				resize(img2, img2, Size(), 0.5, 1, INTER_AREA);
-				levels.push_back(std::make_pair(img.cols, row));
-				sizes.push_back(std::make_pair(img2.cols, img2.rows));
+				mip.isotropic.push_back(Item(img.cols, row, img2.cols, img2.rows));
 				img2.copyTo(mipmap(cv::Rect(img.cols, row, img2.cols, img2.rows)));
 			} else if (img2.rows > 1) {
 				row += img2.rows;
 				resize(img2, img2, Size(), 1, 0.5, INTER_AREA);
-				levels.push_back(std::make_pair(img.cols, row));
-				sizes.push_back(std::make_pair(img2.cols, img2.rows));
+				mip.isotropic.push_back(Item(img.cols, row, img2.cols, img2.rows));
 				img2.copyTo(mipmap(cv::Rect(img.cols, row, img2.cols, img2.rows)));
 			}
 			break;
@@ -99,7 +67,7 @@ void createMipMapWithInfo(shared_ptr<float>& data, const int& rows, const int& c
 void createMipMap(shared_ptr<float>& data, const int& rows, const int& cols, shared_ptr<float>& output) {
 	Mat img = Mat(rows, cols, CV_32FC3, data.get());
 	img.convertTo(img, CV_32FC3, 1 / 255.0);
-	Mat mipmap = Mat::zeros(Size((img.cols) * 3 / 2, img.rows), CV_32FC3);
+	Mat mipmap = Mat::zeros(Size(((img.cols) * 3 / 2) + 1, img.rows), CV_32FC3);
 	img.copyTo(mipmap(cv::Rect(0, 0, img.cols, img.rows)));
 	int row = 0;
 	int level = 1;
@@ -137,37 +105,23 @@ void createMipMap(shared_ptr<float>& data, const int& rows, const int& cols, sha
 }
 
 
-void addLevelsToXML(std::vector<std::pair<int, int>>& lvls, std::vector<std::pair<int, int>>& sizes) {
-	pugi::xml_node root = doc.document_element();
-	pugi::xml_node mipmap = root.append_child("mipmap");
-	pugi::xml_node levels = mipmap.append_child("levels");
-	levels.append_attribute("count") = lvls.size();
-	for(int i =0; i<lvls.size(); i++){
-		pugi::xml_node level = levels.append_child("level");
-		pugi::xml_node size = level.append_child("size");
-		size.append_attribute("cols") = sizes[i].first;
-		size.append_attribute("rows") = sizes[i].second;
-		pugi::xml_node origin = level.append_child("origin");
-		origin.append_attribute("x") = lvls[i].first;
-		origin.append_attribute("y") = lvls[i].second;
+void checkFilename(std::string filename) {
+	FILE* fp = fopen(filename.c_str(), "r");
+	if (fp) {
+		fclose(fp);
+		remove(filename.c_str());
 	}
-
-}
-
-//save xml to BIG
-void writeXMLtoBig(big::BigCoreWrite &bigW) {
-
-	std::string xmlString = node_to_string(doc.document_element());
-	bigW.writeXML(xmlString);
-	//std::cout << xmlString << std::endl;
 }
 
 
 void controlReading(std::string filename) {
-	big::BigCoreRead bigR(filename, false);
-	printf("height,width: %d %d\n", bigR.getImageHeight(), bigR.getImageWidth());
-	printf("entities,images,planes: %d %d %d\n", bigR.getNumberOfEntities(), bigR.getNumberOfImages(), bigR.getNumberOfPlanes());
-	std::cout << bigR.getXMLFile() << std::endl;
+	MIFbtf mif(filename,true);
+	std::cout<<"BTF name" <<mif.getBtfName("btf0")<<std::endl;
+	printf("height,width: %d %d\n", mif.getImageHeight(0), mif.getImageWidth(0));
+	printf("images,planes: %d %d\n", mif.getNumberOfImages(), mif.getImageNumberOfPlanes(0));
+	string xmlFilename = filename.substr(0, filename.size() - 3) + "xml";
+	mif.saveXMLtoSeparateFile(xmlFilename);
+	std::cout << "control XML save to: " << xmlFilename<< std::endl;
 }
 
 
@@ -234,22 +188,30 @@ int main()
 			printf("height,width: %d %d\n", nr, nc);
 			//T.report();
 			printf("loading bigBTF...done\n");
-			filename += "_V2.big";
+			filename += ".mif";
 			// creating new BIG -------------
 			{
 				uint64_t cols = nc;
 				if (mipmap) {
-					cols = nc * 3 / 2;
+					cols = (nc * 3 / 2)+1;
 				}
-				std::vector<std::pair<int, int>> levels;
-				std::vector<std::pair<int, int>> sizes;
-				big::BigCoreWrite bigW(filename, nr, cols, 3);
+				checkFilename(filename);
+				MIFbtf mif(filename);
+				mif.addBtfElement("btf0", "uniform");
+				Directions directions;
+				directions.type = Directions::Type::list;
+				directions.name = "uniform";
+				directions.attributes = { { "stepTheta", "15" },{"stepPhi","30" } };
+				Mipmap mip;
+				mip.type = Mipmap::Type::isotropic;
+
 				uint64_t n = nr * nc * 3;
 				std::shared_ptr<float> data{ new float[n], [](float* p) {delete[] p; } };
 				// filling new BIG from old BIG --------------------
 				float RGB[3];
 				for (int i = 0; i < NoOfImages; i++)
 				{
+					directions.listRecords.push_back({ Direction(Type::source, 0, 0), Direction(Type::sensor, 0, 0) });
 					for (int y = 0; y < nr; y++)
 						for (int x = 0; x < nc; x++)
 						{
@@ -262,20 +224,26 @@ int main()
 						uint64_t n = nr * cols * 3;
 						std::shared_ptr<float> mipmap{ new float[n], [](float* p) {delete[] p; } };
 						if (i == 0)
-							createMipMapWithInfo(data, nr, nc, mipmap, levels, sizes);
+							createMipMapWithInfo(data, nr, nc, mipmap, mip);
 						else
 							createMipMap(data, nr, nc, mipmap);
-						bigW.pushEntity(mipmap, big::DataTypes::FLOAT);
+						image::Image<float> img(mipmap.get(), nr, cols, 3);
+						mif.addImage(i, img);
+						//bigW.pushEntity(mipmap, big::DataTypes::FLOAT);
 					} else {
-						bigW.pushEntity(data, big::DataTypes::FLOAT);
+						//bigW.pushEntity(data, big::DataTypes::FLOAT);
+						image::Image<float> img(data.get(), nr, nc, 3);
+						mif.addImage(i, img);
 					}
 
 					
 				}
-				if (mipmap) {
-					addLevelsToXML(levels, sizes);
-				}
-				writeXMLtoBig(bigW);
+				if (mipmap)
+					mif.addBtfMipmap("btf0", mip);
+				mif.addBtfDirectionsReference("btf0", "directions0", directions);
+				mif.addDirections("directions0", directions);
+				mif.saveXML();
+				
 			}
 
 			// control reading ------------------------------------
@@ -297,14 +265,21 @@ int main()
 			printf("height,width: %d %d\n", nr, nc);
 			//T.report();
 			printf("loading bigBTF...done\n");
-			filename += "_V2.big";
+			filename += ".mif";
 			// creating new BIG -------------
 			{
 				int cols = nc;
 				if (mipmap) 
-					cols = nc * 3 / 2;
-
-				big::BigCoreWrite bigW(filename.c_str(), nr, cols, 3);
+					cols = (nc * 3 / 2) + 1;
+				checkFilename(filename);
+				MIFbtf mif(filename);
+				mif.addBtfElement("btf0", "uniform");
+				Directions directions;
+				directions.type = Directions::Type::list;
+				directions.name = "UBO81x81";
+				
+				Mipmap mip;
+				mip.type = Mipmap::Type::isotropic;
 				std::vector<std::pair<int, int>> levels;
 				std::vector<std::pair<int, int>> sizes;
 				uint64_t n = nr * nc * 3;
@@ -326,19 +301,32 @@ int main()
 									data.get()[y * nc * 3 + x * 3 + isp] = RGB[isp];
 							}
 
-						uint64_t n = nr * cols * 3;
-						std::shared_ptr<float> mipmap{ new float[n], [](float* p) {delete[] p; } };
-						if (i == 0 && v == 0)
-							createMipMapWithInfo(data, nr, nc, mipmap, levels, sizes);
-						else
-							createMipMap(data, nr, nc, mipmap);
-						bigW.pushEntity(mipmap, big::DataTypes::FLOAT);
+						if(mipmap) {
+							uint64_t n = nr * cols * 3;
+							std::shared_ptr<float> mipmap{ new float[n], [](float* p) {delete[] p; } };
+							if (i == 0)
+								createMipMapWithInfo(data, nr, nc, mipmap, mip);
+							else
+								createMipMap(data, nr, nc, mipmap);
+							image::Image<float> img(mipmap.get(), nr, nc, 3);
+							mif.addImage(i, img);
+							//bigW.pushEntity(mipmap, big::DataTypes::FLOAT);
+						} else {
+							//bigW.pushEntity(data, big::DataTypes::FLOAT);
+							image::Image<float> img(data.get(), nr, nc, 3);
+							mif.addImage(nview*v+i, img);
+						}
+						directions.listRecords.push_back({ Direction(Type::source, 0, 0), Direction(Type::sensor, 0, 0) });
 					}
 
+				mif.addBtfDirectionsReference("btf0", "directions0", directions);
+				mif.addDirections("directions0", directions);
 				if (mipmap)
-					addLevelsToXML(levels, sizes);
-				//save xml to BIG
-				writeXMLtoBig(bigW);
+					mif.addBtfMipmap("btf0", mip);
+
+				//save xml to MIF
+				mif.saveXML();
+				std::cout << mif.getXML() << std::endl;
 			}
 			// control reading ------------------------------------
 			controlReading(filename);
