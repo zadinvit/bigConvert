@@ -1,6 +1,7 @@
 #include <iostream>
 #include <fstream>
 #include <cstring>
+#include <unordered_map>
 
 #include "MIFbtf.hpp"
 #include "Image.hpp"
@@ -17,17 +18,34 @@ using namespace mif::mipmap;
 
 
 using namespace cv;
-pugi::xml_document doc;
 
 
+enum class Distribution { uniform, UBO, BTFthtd, BTFthph, none };
+static std::unordered_map<std::string, Distribution > const table = { {"uniform",Distribution::uniform}, {"UBO81x81",Distribution::UBO}, {"CoatingRegular", Distribution::BTFthtd}, {"CoatingSpecial", Distribution::BTFthph} };
+Distribution parse(std::string str) {
+	auto it = table.find(str);
+	if (it != table.end())
+		return it->second;
+	else
+		return Distribution::none;
+}
+
+string distToString(Distribution d) {
+	for (auto& i : table) {
+		if (i.second == d)
+		{
+			return i.first;
+		}
+	}
+}
 
 void createMipMapWithInfo(shared_ptr<float>& data, const int& rows, const int& cols, shared_ptr<float>& output, Mipmap & mip) {
 	Mat img = Mat(rows, cols, CV_32FC3, data.get());
-	img.convertTo(img, CV_32FC3, 1 / 255.0);
 	Mat mipmap = Mat::zeros(Size(((img.cols) * 3 / 2)+1, img.rows), CV_32FC3);
 	img.copyTo(mipmap(cv::Rect(0, 0, img.cols, img.rows)));
 	int row = 0;
 	int level = 1;
+	mip.isotropic.push_back(Item(0,0, img.cols, img.rows));
 	while (true) {
 		Mat img2;
 		resize(img, img2, Size(), pow(0.5,level), pow(0.5, level), INTER_AREA);
@@ -66,7 +84,6 @@ void createMipMapWithInfo(shared_ptr<float>& data, const int& rows, const int& c
 //create mip map image using OpenCV resize with INTER_AREA algorithm which is clever and it gives moire-free results
 void createMipMap(shared_ptr<float>& data, const int& rows, const int& cols, shared_ptr<float>& output) {
 	Mat img = Mat(rows, cols, CV_32FC3, data.get());
-	img.convertTo(img, CV_32FC3, 1 / 255.0);
 	Mat mipmap = Mat::zeros(Size(((img.cols) * 3 / 2) + 1, img.rows), CV_32FC3);
 	img.copyTo(mipmap(cv::Rect(0, 0, img.cols, img.rows)));
 	int row = 0;
@@ -124,6 +141,303 @@ void controlReading(std::string filename) {
 	std::cout << "control XML save to: " << xmlFilename<< std::endl;
 }
 
+void convertUniform(std::string & filename, bool &mipmap) {
+	TBIG T;
+	//printf("start\n");
+	std::string lFilename = filename + ".big";
+	int status = T.load(lFilename.c_str(), true, 10000000000000); // true = memory, false = disk
+	if (status < 0) {
+		std::cout << "Open BIG file failed. File name: " << filename << std::endl;
+		return;
+	}
+	int NoOfImages = T.get_images();
+	int nr = T.get_height();
+	int nc = T.get_width();
+	printf("height,width: %d %d\n", nr, nc);
+	//T.report();
+	printf("loading bigBTF...done\n");
+	filename += ".mif";
+	// creating new BIG -------------
+	{
+		uint64_t cols = nc;
+		if (mipmap) {
+			cols = (nc * 3 / 2) + 1;
+		}
+		checkFilename(filename);
+		MIFbtf mif(filename);
+		mif.addBtfElement("btf0", distToString(Distribution::uniform));
+		Directions directions;
+		directions.type = Directions::Type::list;
+		directions.name = distToString(Distribution::uniform);
+		directions.attributes = { { "stepTheta", "15" },{"stepPhi","30" } };
+		Mipmap mip;
+		mip.type = Mipmap::Type::isotropic;
+
+		uint64_t n = nr * nc * 3;
+		std::shared_ptr<float> data{ new float[n], [](float* p) {delete[] p; } };
+		// filling new BIG from old BIG --------------------
+		float RGB[3];
+		for (int i = 0; i < NoOfImages; i++)
+		{
+			directions.listRecords.push_back({ Direction(Type::source, 0, 0), Direction(Type::sensor, 0, 0) });
+			for (int y = 0; y < nr; y++)
+				for (int x = 0; x < nc; x++)
+				{
+					T.get_pixel(0, y, x, i, RGB);
+					for (int isp = 0; isp < 3; isp++)
+						data.get()[y * nc * 3 + x * 3 + isp] = RGB[isp];
+				}
+
+			if (mipmap) {
+				uint64_t n = nr * cols * 3;
+				std::shared_ptr<float> mipmap{ new float[n], [](float* p) {delete[] p; } };
+				if (i == 0)
+					createMipMapWithInfo(data, nr, nc, mipmap, mip);
+				else
+					createMipMap(data, nr, nc, mipmap);
+				image::Image<float> img(mipmap.get(), nr, cols, 3);
+				mif.addImage(i, img);
+				//bigW.pushEntity(mipmap, big::DataTypes::FLOAT);
+			} else {
+				//bigW.pushEntity(data, big::DataTypes::FLOAT);
+				image::Image<float> img(data.get(), nr, nc, 3);
+				mif.addImage(i, img);
+			}
+
+
+		}
+		if (mipmap)
+			mif.addBtfMipmap("btf0", mip);
+		mif.addBtfDirectionsReference("btf0", "directions0", directions);
+		mif.addDirections("directions0", directions);
+		mif.saveXML();
+
+	}
+
+	// control reading ------------------------------------
+	controlReading(filename);
+}
+
+void convertUBO(std::string& filename, bool& mipmap) {
+	std::string lFilename = filename + ".big";
+	// loading old BIG --------------
+	TBIG T;
+	int status = T.load(lFilename.c_str(), true, 10000000000000); // true = memory, false = disk
+	if (status < 0) {
+		std::cout << "Open BIG file failed. File name: " << filename << std::endl;
+		return;
+	}
+	int NoOfImages = T.get_images();
+	int nr = T.get_height();
+	int nc = T.get_width();
+	printf("height,width: %d %d\n", nr, nc);
+	//T.report();
+	printf("loading bigBTF...done\n");
+	filename += ".mif";
+	// creating new BIG -------------
+	{
+		int cols = nc;
+		if (mipmap)
+			cols = (nc * 3 / 2) + 1;
+		checkFilename(filename);
+		MIFbtf mif(filename);
+		mif.addBtfElement("btf0", distToString(Distribution::UBO));
+		Directions directions;
+		directions.type = Directions::Type::list;
+		directions.name = distToString(Distribution::UBO);
+
+		Mipmap mip;
+		mip.type = Mipmap::Type::isotropic;
+		uint64_t n = nr * nc * 3;
+
+		std::shared_ptr<float> data{ new float[n], [](float* p) {delete[] p; } };
+		// filling new BIG from old BIG --------------------
+		int nillu = 81;
+		int nview = 81;
+		float RGB[3];
+		int k = 0;
+		for (int v = 0; v < nview; v++)
+			for (int i = 0; i < nillu; i++)
+			{
+				int idx = v * nillu + i;
+				for (int y = 0; y < nr; y++)
+					for (int x = 0; x < nc; x++)
+					{
+						T.get_pixel(0, y, x, idx, RGB);
+						for (int isp = 0; isp < 3; isp++)
+							data.get()[y * nc * 3 + x * 3 + isp] = RGB[isp];
+					}
+
+				if (mipmap) {
+					uint64_t n = nr * cols * 3;
+					std::shared_ptr<float> arrmip{ new float[n], [](float* p) {delete[] p; } };
+					if (k == 0)
+						createMipMapWithInfo(data, nr, nc, arrmip, mip);
+					else
+						createMipMap(data, nr, nc, arrmip);
+					image::Image<float> img(arrmip.get(), nr, cols, 3);
+					mif.addImage(k, img);
+					//bigW.pushEntity(mipmap, big::DataTypes::FLOAT);
+				} else {
+					//bigW.pushEntity(data, big::DataTypes::FLOAT);
+					image::Image<float> img(data.get(), nr, nc, 3);
+					mif.addImage(k, img);
+				}
+				k++;
+				directions.listRecords.push_back({ Direction(Type::source, 0, 0), Direction(Type::sensor, 0, 0) });
+			}
+
+		mif.addBtfDirectionsReference("btf0", "directions0", directions);
+		mif.addDirections("directions0", directions);
+		if (mipmap)
+			mif.addBtfMipmap("btf0", mip);
+
+		//save xml to MIF
+		mif.saveXML();
+		std::cout << mif.getXML() << std::endl;
+	}
+	// control reading ------------------------------------
+	controlReading(filename);
+}
+
+void convertthtd(std::string &filename, bool& mipmap) {
+	TBIG T;
+	std::string lFilename = filename + ".big";
+	int status = T.load(lFilename.c_str(), true); // true = memory, false = disk
+	if (status < 0) {
+		std::cout << "Open BIG file failed. File name: " << filename << std::endl;
+		return;
+	}
+	int NoOfImages = T.get_images();
+	int nr = T.get_height();
+	int nc = T.get_width();
+	printf("height,width: %d %d\n", nr, nc);
+	//T.report();
+	printf("loading bigBTF...done\n");
+	filename += ".mif";
+	// creating new BIG -------------
+	{
+		int cols = nc;
+		if (mipmap)
+			cols = (nc * 3 / 2) + 1;
+		checkFilename(filename);
+		MIFbtf mif(filename);
+		mif.addBtfElement("btf0", distToString(Distribution::BTFthtd));
+		Directions directions;
+		directions.type = Directions::Type::list;
+		directions.name = distToString(Distribution::BTFthtd);
+
+		Mipmap mip;
+		mip.type = Mipmap::Type::isotropic;
+		uint64_t n = nr * nc * 3;
+		std::shared_ptr<float> data{ new float[n], [](float* p) {delete[] p; } };
+		// filling new BIG from old BIG --------------------
+		float RGB[3];
+		for (int i = 0; i < NoOfImages; i++)
+		{
+			for (int y = 0; y < nr; y++)
+				for (int x = 0; x < nc; x++)
+				{
+					T.get_pixel(0, y, x, i, RGB);
+					for (int isp = 0; isp < 3; isp++)
+						data.get()[y * nc * 3 + x * 3 + isp] = RGB[isp];
+				}
+			if (mipmap) {
+				uint64_t n = nr * cols * 3;
+				std::shared_ptr<float> mipmap{ new float[n], [](float* p) {delete[] p; } };
+				if (i == 0)
+					createMipMapWithInfo(data, nr, nc, mipmap, mip);
+				else
+					createMipMap(data, nr, nc, mipmap);
+				image::Image<float> img(mipmap.get(), nr, cols, 3);
+				mif.addImage(i, img);
+			} else {
+				image::Image<float> img(data.get(), nr, nc, 3);
+				mif.addImage(i, img);
+			}
+			directions.listRecords.push_back({ Direction(Type::source, 0, 0), Direction(Type::sensor, 0, 0) });
+		}
+		mif.addBtfDirectionsReference("btf0", "directions0", directions);
+		mif.addDirections("directions0", directions);
+		if (mipmap)
+			mif.addBtfMipmap("btf0", mip);
+
+		//save xml to MIF
+		mif.saveXML();
+		std::cout << mif.getXML() << std::endl;
+		controlReading(filename);
+	}
+
+}
+void convertthph(std::string &filename, bool &mipmap) {
+	TBIG T;
+	std::string lFilename = filename + ".big";
+	int status = T.load(lFilename.c_str(), true); // true = memory, false = disk
+	if (status < 0) {
+		std::cout << "Open BIG file failed. File name: " << filename << std::endl;
+		return;
+	}
+	int NoOfImages = T.get_images();
+	int nr = T.get_height();
+	int nc = T.get_width();
+	printf("height,width: %d %d\n", nr, nc);
+	//T.report();
+	printf("loading bigBTF...done\n");
+	filename += ".mif";
+	// creating new BIG -------------
+	{
+		int cols = nc;
+		if (mipmap)
+			cols = (nc * 3 / 2) + 1;
+		checkFilename(filename);
+		MIFbtf mif(filename);
+		mif.addBtfElement("btf0", distToString(Distribution::BTFthph));
+		Directions directions;
+		directions.type = Directions::Type::list;
+		directions.name = distToString(Distribution::BTFthph);
+
+		Mipmap mip;
+		mip.type = Mipmap::Type::isotropic;
+		uint64_t n = nr * nc * 3;
+		std::shared_ptr<float> data{ new float[n], [](float* p) {delete[] p; } };
+		// filling new BIG from old BIG --------------------
+		float RGB[3];
+		for (int i = 0; i < NoOfImages; i++)
+		{
+			for (int y = 0; y < nr; y++)
+				for (int x = 0; x < nc; x++)
+				{
+					T.get_pixel(0, y, x, i, RGB);
+					for (int isp = 0; isp < 3; isp++)
+						data.get()[y * nc * 3 + x * 3 + isp] = RGB[isp];
+				}
+			if (mipmap) {
+				uint64_t n = nr * cols * 3;
+				std::shared_ptr<float> mipmap{ new float[n], [](float* p) {delete[] p; } };
+				if (i == 0)
+					createMipMapWithInfo(data, nr, nc, mipmap, mip);
+				else
+					createMipMap(data, nr, nc, mipmap);
+				image::Image<float> img(mipmap.get(), nr, cols, 3);
+				mif.addImage(i, img);
+			} else {
+				image::Image<float> img(data.get(), nr, nc, 3);
+				mif.addImage(i, img);
+			}
+			directions.listRecords.push_back({ Direction(Type::source, 0, 0), Direction(Type::sensor, 0, 0) });
+		}
+		mif.addBtfDirectionsReference("btf0", "directions0", directions);
+		mif.addDirections("directions0", directions);
+		if (mipmap)
+			mif.addBtfMipmap("btf0", mip);
+
+		//save xml to MIF
+		mif.saveXML();
+		std::cout << mif.getXML() << std::endl;
+		controlReading(filename);
+	}
+
+}
 
 int main()
 {
@@ -132,29 +446,17 @@ int main()
 		std::cout << "Config file missing" << std::endl;
 		return -1;
 	}
-
-	auto declarationNode = doc.append_child(pugi::node_declaration);
-	declarationNode.append_attribute("version") = "1.0";
-	declarationNode.append_attribute("encoding") = "ISO-8859-1";
-	declarationNode.append_attribute("standalone") = "yes";
-	auto root = doc.append_child("BigFile");
-
 	std::string line;
 	std::getline(configfile, line);
 	std::istringstream iss(line);
 	std::string text;
 	iss = std::istringstream(line);
-	bool ubo;
-	if (!(iss >> text >> ubo)) {
+	string distStr;
+	if (!(iss >> text >> distStr)) {
 		std::cout << "UBO parse error" << std::endl;
 		return -1;
 	}
-	auto type = root.append_child("type");
-	if (ubo) {
-		type.append_child(pugi::node_pcdata).set_value("UBO");
-	} else {
-		type.append_child(pugi::node_pcdata).set_value("uniform");
-	}
+	Distribution dist = parse(distStr);
 	std::getline(configfile, line);
 	bool mipmap;
 	iss = std::istringstream(line);
@@ -165,173 +467,38 @@ int main()
 	
 	while (std::getline(configfile, line)) {
 		iss = std::istringstream(line);
+		std::string distStr;
 		std::string filename;
 		if (!(iss >> filename)) {
 			std::cout << "Filename parse error" << std::endl;
 			return -1;
 		}
-
-
-		if (!ubo) {
-			// loading old BIG --------------
-			TBIG T;
-			//printf("start\n");
-			std::string lFilename = filename + ".big";
-			int status = T.load(lFilename.c_str(), true, 10000000000000); // true = memory, false = disk
-			if (status < 0) {
-				std::cout << "Open BIG file failed. File name: " << filename<< std::endl;
-				return -5;
-			}
-			int NoOfImages = T.get_images();
-			int nr = T.get_height();
-			int nc = T.get_width();
-			printf("height,width: %d %d\n", nr, nc);
-			//T.report();
-			printf("loading bigBTF...done\n");
-			filename += ".mif";
-			// creating new BIG -------------
-			{
-				uint64_t cols = nc;
-				if (mipmap) {
-					cols = (nc * 3 / 2)+1;
-				}
-				checkFilename(filename);
-				MIFbtf mif(filename);
-				mif.addBtfElement("btf0", "uniform");
-				Directions directions;
-				directions.type = Directions::Type::list;
-				directions.name = "uniform";
-				directions.attributes = { { "stepTheta", "15" },{"stepPhi","30" } };
-				Mipmap mip;
-				mip.type = Mipmap::Type::isotropic;
-
-				uint64_t n = nr * nc * 3;
-				std::shared_ptr<float> data{ new float[n], [](float* p) {delete[] p; } };
-				// filling new BIG from old BIG --------------------
-				float RGB[3];
-				for (int i = 0; i < NoOfImages; i++)
-				{
-					directions.listRecords.push_back({ Direction(Type::source, 0, 0), Direction(Type::sensor, 0, 0) });
-					for (int y = 0; y < nr; y++)
-						for (int x = 0; x < nc; x++)
-						{
-							T.get_pixel(0, y, x, i, RGB);
-							for (int isp = 0; isp < 3; isp++)
-								data.get()[y * nc * 3 + x * 3 + isp] = RGB[isp];
-						}
-
-					if (mipmap) {
-						uint64_t n = nr * cols * 3;
-						std::shared_ptr<float> mipmap{ new float[n], [](float* p) {delete[] p; } };
-						if (i == 0)
-							createMipMapWithInfo(data, nr, nc, mipmap, mip);
-						else
-							createMipMap(data, nr, nc, mipmap);
-						image::Image<float> img(mipmap.get(), nr, cols, 3);
-						mif.addImage(i, img);
-						//bigW.pushEntity(mipmap, big::DataTypes::FLOAT);
-					} else {
-						//bigW.pushEntity(data, big::DataTypes::FLOAT);
-						image::Image<float> img(data.get(), nr, nc, 3);
-						mif.addImage(i, img);
-					}
-
-					
-				}
-				if (mipmap)
-					mif.addBtfMipmap("btf0", mip);
-				mif.addBtfDirectionsReference("btf0", "directions0", directions);
-				mif.addDirections("directions0", directions);
-				mif.saveXML();
-				
-			}
-
-			// control reading ------------------------------------
-			controlReading(filename);
-			
-		} else // UBO sampling
-		{
-			std::string lFilename = filename + ".big";
-			// loading old BIG --------------
-			TBIG T;
-			int status = T.load(lFilename.c_str(), true, 10000000000000); // true = memory, false = disk
-			if (status < 0) {
-				std::cout << "Open BIG file failed. File name: " << filename << std::endl;
-				return -5;
-			}
-			int NoOfImages = T.get_images();
-			int nr = T.get_height();
-			int nc = T.get_width();
-			printf("height,width: %d %d\n", nr, nc);
-			//T.report();
-			printf("loading bigBTF...done\n");
-			filename += ".mif";
-			// creating new BIG -------------
-			{
-				int cols = nc;
-				if (mipmap) 
-					cols = (nc * 3 / 2) + 1;
-				checkFilename(filename);
-				MIFbtf mif(filename);
-				mif.addBtfElement("btf0", "uniform");
-				Directions directions;
-				directions.type = Directions::Type::list;
-				directions.name = "UBO81x81";
-				
-				Mipmap mip;
-				mip.type = Mipmap::Type::isotropic;
-				std::vector<std::pair<int, int>> levels;
-				std::vector<std::pair<int, int>> sizes;
-				uint64_t n = nr * nc * 3;
-				
-				std::shared_ptr<float> data{ new float[n], [](float* p) {delete[] p; } };
-				// filling new BIG from old BIG --------------------
-				int nillu = 81;
-				int nview = 81;
-				float RGB[3];
-				for (int v = 0; v < nview; v++)
-					for (int i = 0; i < nillu; i++)
-					{
-						int idx = v * nillu + i;
-						for (int y = 0; y < nr; y++)
-							for (int x = 0; x < nc; x++)
-							{
-								T.get_pixel(0, y, x, idx, RGB);
-								for (int isp = 0; isp < 3; isp++)
-									data.get()[y * nc * 3 + x * 3 + isp] = RGB[isp];
-							}
-
-						if(mipmap) {
-							uint64_t n = nr * cols * 3;
-							std::shared_ptr<float> mipmap{ new float[n], [](float* p) {delete[] p; } };
-							if (i == 0)
-								createMipMapWithInfo(data, nr, nc, mipmap, mip);
-							else
-								createMipMap(data, nr, nc, mipmap);
-							image::Image<float> img(mipmap.get(), nr, nc, 3);
-							mif.addImage(i, img);
-							//bigW.pushEntity(mipmap, big::DataTypes::FLOAT);
-						} else {
-							//bigW.pushEntity(data, big::DataTypes::FLOAT);
-							image::Image<float> img(data.get(), nr, nc, 3);
-							mif.addImage(nview*v+i, img);
-						}
-						directions.listRecords.push_back({ Direction(Type::source, 0, 0), Direction(Type::sensor, 0, 0) });
-					}
-
-				mif.addBtfDirectionsReference("btf0", "directions0", directions);
-				mif.addDirections("directions0", directions);
-				if (mipmap)
-					mif.addBtfMipmap("btf0", mip);
-
-				//save xml to MIF
-				mif.saveXML();
-				std::cout << mif.getXML() << std::endl;
-			}
-			// control reading ------------------------------------
-			controlReading(filename);
-
+		if ((iss >> distStr)) {
+			dist = parse(distStr);
 		}
-		//std::cout << "Saving result: " << doc.save_file("output.xml") << std::endl;
+		switch (dist)
+		{
+		case Distribution::uniform:
+			convertUniform(filename, mipmap);
+			break;
+		case Distribution::UBO:
+			convertUBO(filename, mipmap);
+			break;
+		case Distribution::BTFthtd:
+			convertthtd(filename, mipmap);
+			break;
+		case Distribution::BTFthph:
+			convertthph(filename, mipmap);
+			break;
+		case Distribution::none:
+			std::cout << filename << " Bad distribution name, choices are: " << std::endl;
+			for (auto& item : table) {
+				std::cout << item.first << std::endl;
+			}
+			std::cout << std::endl;
+			break;
+		default:
+			break;
+		}
 	}
 }
