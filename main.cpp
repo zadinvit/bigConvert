@@ -419,7 +419,7 @@ void convertUBO(std::string& filename, Filtering& filt) {
 						createAnisoMapWithInfo(data, nr, nc, arrmip, mip);
 					else
 						createAnisoMap(data, nr, nc, arrmip);
-					image::Image<float> img(arrmip.get(), nr, cols, 3);
+					image::Image<float> img(arrmip.get(),rows, cols, 3);
 					mif.addImage(k, img);
 				} else {
 					image::Image<float> img(data.get(), nr, nc, 3);

@@ -1,5 +1,3 @@
-isUBO: 1
-generate_mipmap: 0
-F:\vita_skola\convertFiles\MAM2014_016
-F:\vita_skola\convertFiles\MAM2014_011
-F:\vita_skola\convertFiles\MAM2014_007
+distribution: UBO81
+filtering: anisotropy
+MAM2014_016 UBO81x81
