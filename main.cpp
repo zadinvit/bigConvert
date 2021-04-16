@@ -157,21 +157,28 @@ void createAnisoMapWithInfo(shared_ptr<float>& data, const int& rows, const int&
 			Mat img2;
 			resize(img, img2, Size(), pow(0.5, levelx), pow(0.5, levely), INTER_AREA);
 			img2.copyTo(mipmap(cv::Rect(col, row, img2.cols, img2.rows)));
+			if ((levelx + levely * levelxCnt) >= mip.anisotropic.size()) {
+				mip.anisotropic.clear();
+				mip.anisotropic.resize(ceil(log2f(rows)+1), ceil(log2f(cols)+1));
+				levelxCnt = ceil(log2f(cols)+1);
+				levely = -1;
+				levelx = 0;
+				col = 0;
+				row = 0;
+				continue;
+			}
 			mip.anisotropic[levelx  + levely * levelxCnt] = Item(col, row, img2.cols, img2.rows);
 
 			//handle rectangle object special cases
 			if (img2.rows <= 1 || img2.cols <= 1) {
-				if (img2.cols > 1) {
+				if(levelx != levelxCnt-1)
+					ydone = true;
+				else {
 					row += img2.rows;
-					resize(img2, img2, Size(), 0.5, 1, INTER_AREA);
-					img2.copyTo(mipmap(cv::Rect(img.cols, row, img2.cols, img2.rows)));
-				} else if (img2.rows > 1) {
-					row += img2.rows;
-					resize(img2, img2, Size(), 1, 0.5, INTER_AREA);
-					img2.copyTo(mipmap(cv::Rect(img.cols, row, img2.cols, img2.rows)));
+					tmpcol = img2.cols;
 				}
-				ydone = true;
 				if (img2.rows <= 1 && img2.cols <= 1) {
+					ydone = true;
 					xdone = true;
 				}
 			} else {
@@ -286,9 +293,7 @@ void convertUniform(std::string & filename, Filtering& filt) {
 	// creating new BIG -------------
 	{
 		uint64_t cols = nc;
-		if (filt == Filtering::isotropy) {
-			cols = (nc * 3 / 2) + 1;
-		}
+		uint64_t rows= nr;
 		checkFilename(filename);
 		MIFbtf mif(filename);
 		mif.addBtfElement("btf0", distToString(Distribution::uniform));
@@ -297,15 +302,25 @@ void convertUniform(std::string & filename, Filtering& filt) {
 		directions.name = distToString(Distribution::uniform);
 		directions.attributes = { { "stepTheta", "15" },{"stepPhi","30" } };
 		Mipmap mip;
-		mip.type = Mipmap::Type::isotropic;
+		if (filt == Filtering::isotropy) {
+			cols = (nc * 3 / 2) + 1;
+			mip.type = Mipmap::Type::isotropic;
+		}
+		if (filt == Filtering::anisotropy) {
+			rows = 2 * nr + 1;
+			cols = 2 * nc + 1;
+			mip.type = Mipmap::Type::anisotropic;
+		}
 
 		uint64_t n = nr * nc * 3;
 		std::shared_ptr<float> data{ new float[n], [](float* p) {delete[] p; } };
 		// filling new BIG from old BIG --------------------
 		float RGB[3];
+		float angles[12];
 		for (int i = 0; i < NoOfImages; i++)
 		{
-			directions.listRecords.push_back({ Direction(Type::source, 0, 0), Direction(Type::sensor, 0, 0) });
+			T.get_angles(i, angles);
+			directions.listRecords.push_back({ Direction(Type::source, angles[0], angles[1]), Direction(Type::sensor,angles[2], angles[3]) });
 			for (int y = 0; y < nr; y++)
 				for (int x = 0; x < nc; x++)
 				{
@@ -324,6 +339,15 @@ void convertUniform(std::string & filename, Filtering& filt) {
 				image::Image<float> img(mipmap.get(), nr, cols, 3);
 				mif.addImage(i, img);
 				//bigW.pushEntity(mipmap, big::DataTypes::FLOAT);
+			} else if (filt == Filtering::anisotropy) {
+				uint64_t n = rows * cols * 3;
+				std::shared_ptr<float> arrmip{ new float[n], [](float* p) {delete[] p; } };
+				if (i == 0)
+					createAnisoMapWithInfo(data, nr, nc, arrmip, mip);
+				else
+					createAnisoMap(data, nr, nc, arrmip);
+				image::Image<float> img(arrmip.get(), rows, cols, 3);
+				mif.addImage(i, img);
 			} else {
 				//bigW.pushEntity(data, big::DataTypes::FLOAT);
 				image::Image<float> img(data.get(), nr, nc, 3);
@@ -332,8 +356,9 @@ void convertUniform(std::string & filename, Filtering& filt) {
 
 
 		}
-		if (filt == Filtering::isotropy)
+		if (filt == Filtering::isotropy || filt == Filtering::anisotropy) {
 			mif.addBtfMipmap("btf0", mip);
+		}
 		mif.addBtfDirectionsReference("btf0", "directions0", directions);
 		mif.addDirections("directions0", directions);
 		mif.saveXML();
@@ -389,11 +414,14 @@ void convertUBO(std::string& filename, Filtering& filt) {
 		// filling new BIG from old BIG --------------------
 		int nillu = 81;
 		int nview = 81;
+		float angles[12];
 		float RGB[3];
 		int k = 0;
 		for (int v = 0; v < nview; v++)
 			for (int i = 0; i < nillu; i++)
 			{
+				T.get_angles(k, angles);
+				directions.listRecords.push_back({ Direction(Type::source, angles[0], angles[1]), Direction(Type::sensor,angles[2], angles[3]) });
 				int idx = v * nillu + i;
 				for (int y = 0; y < nr; y++)
 					for (int x = 0; x < nc; x++)
@@ -426,7 +454,6 @@ void convertUBO(std::string& filename, Filtering& filt) {
 					mif.addImage(k, img);
 				}
 				k++;
-				directions.listRecords.push_back({ Direction(Type::source, 0, 0), Direction(Type::sensor, 0, 0) });
 			}
 
 		mif.addBtfDirectionsReference("btf0", "directions0", directions);
@@ -461,6 +488,7 @@ void convertthtd(std::string &filename, Filtering& filt) {
 	// creating new BIG -------------
 	{
 		int cols = nc;
+		int rows = nr;
 		if (filt == Filtering::isotropy)
 			cols = (nc * 3 / 2) + 1;
 		checkFilename(filename);
@@ -471,13 +499,24 @@ void convertthtd(std::string &filename, Filtering& filt) {
 		directions.name = distToString(Distribution::BTFthtd);
 
 		Mipmap mip;
-		mip.type = Mipmap::Type::isotropic;
+		if (filt == Filtering::isotropy) {
+			cols = (nc * 3 / 2) + 1;
+			mip.type = Mipmap::Type::isotropic;
+		}
+		if (filt == Filtering::anisotropy) {
+			rows = 2 * nr + 1;
+			cols = 2 * nc + 1;
+			mip.type = Mipmap::Type::anisotropic;
+		}
 		uint64_t n = nr * nc * 3;
 		std::shared_ptr<float> data{ new float[n], [](float* p) {delete[] p; } };
 		// filling new BIG from old BIG --------------------
+		float angles[12];
 		float RGB[3];
 		for (int i = 0; i < NoOfImages; i++)
 		{
+			T.get_angles(i, angles);
+			directions.listRecords.push_back({ Direction(Type::source, angles[0], angles[1]), Direction(Type::sensor,angles[2], angles[3]) });
 			for (int y = 0; y < nr; y++)
 				for (int x = 0; x < nc; x++)
 				{
@@ -494,16 +533,25 @@ void convertthtd(std::string &filename, Filtering& filt) {
 					createMipMap(data, nr, nc, mipmap);
 				image::Image<float> img(mipmap.get(), nr, cols, 3);
 				mif.addImage(i, img);
+			} else if (filt == Filtering::anisotropy) {
+				uint64_t n = rows * cols * 3;
+				std::shared_ptr<float> arrmip{ new float[n], [](float* p) {delete[] p; } };
+				if (i == 0)
+					createAnisoMapWithInfo(data, nr, nc, arrmip, mip);
+				else
+					createAnisoMap(data, nr, nc, arrmip);
+				image::Image<float> img(arrmip.get(), rows, cols, 3);
+				mif.addImage(i, img);
 			} else {
 				image::Image<float> img(data.get(), nr, nc, 3);
 				mif.addImage(i, img);
 			}
-			directions.listRecords.push_back({ Direction(Type::source, 0, 0), Direction(Type::sensor, 0, 0) });
 		}
 		mif.addBtfDirectionsReference("btf0", "directions0", directions);
 		mif.addDirections("directions0", directions);
-		if (filt == Filtering::isotropy)
+		if (filt == Filtering::isotropy || filt == Filtering::anisotropy) {
 			mif.addBtfMipmap("btf0", mip);
+		}
 
 		//save xml to MIF
 		mif.saveXML();
@@ -530,6 +578,7 @@ void convertthph(std::string &filename, Filtering& filt) {
 	// creating new BIG -------------
 	{
 		int cols = nc;
+		int rows = nr;
 		if (filt == Filtering::isotropy)
 			cols = (nc * 3 / 2) + 1;
 		checkFilename(filename);
@@ -540,13 +589,24 @@ void convertthph(std::string &filename, Filtering& filt) {
 		directions.name = distToString(Distribution::BTFthph);
 
 		Mipmap mip;
-		mip.type = Mipmap::Type::isotropic;
+		if (filt == Filtering::isotropy) {
+			cols = (nc * 3 / 2) + 1;
+			mip.type = Mipmap::Type::isotropic;
+		}
+		if (filt == Filtering::anisotropy) {
+			rows = 2 * nr + 1;
+			cols = 2 * nc + 1;
+			mip.type = Mipmap::Type::anisotropic;
+		}
 		uint64_t n = nr * nc * 3;
 		std::shared_ptr<float> data{ new float[n], [](float* p) {delete[] p; } };
 		// filling new BIG from old BIG --------------------
+		float angles[12];
 		float RGB[3];
 		for (int i = 0; i < NoOfImages; i++)
 		{
+			T.get_angles(i, angles);
+			directions.listRecords.push_back({ Direction(Type::source, angles[0], angles[1]), Direction(Type::sensor,angles[2], angles[3]) });
 			for (int y = 0; y < nr; y++)
 				for (int x = 0; x < nc; x++)
 				{
@@ -563,16 +623,25 @@ void convertthph(std::string &filename, Filtering& filt) {
 					createMipMap(data, nr, nc, mipmap);
 				image::Image<float> img(mipmap.get(), nr, cols, 3);
 				mif.addImage(i, img);
+			} else if (filt == Filtering::anisotropy) {
+				uint64_t n = rows * cols * 3;
+				std::shared_ptr<float> arrmip{ new float[n], [](float* p) {delete[] p; } };
+				if (i == 0)
+					createAnisoMapWithInfo(data, nr, nc, arrmip, mip);
+				else
+					createAnisoMap(data, nr, nc, arrmip);
+				image::Image<float> img(arrmip.get(), rows, cols, 3);
+				mif.addImage(i, img);
 			} else {
 				image::Image<float> img(data.get(), nr, nc, 3);
 				mif.addImage(i, img);
 			}
-			directions.listRecords.push_back({ Direction(Type::source, 0, 0), Direction(Type::sensor, 0, 0) });
 		}
 		mif.addBtfDirectionsReference("btf0", "directions0", directions);
 		mif.addDirections("directions0", directions);
-		if (filt == Filtering::isotropy)
+		if (filt == Filtering::isotropy || filt == Filtering::anisotropy) {
 			mif.addBtfMipmap("btf0", mip);
+		}
 
 		//save xml to MIF
 		mif.saveXML();
