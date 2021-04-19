@@ -217,20 +217,13 @@ void createAnisoMap(shared_ptr<float>& data, const int& rows, const int& cols, s
 			resize(img, img2, Size(), pow(0.5, levelx), pow(0.5, levely), INTER_AREA);
 			img2.copyTo(mipmap(cv::Rect(col, row, img2.cols, img2.rows)));
 			//handle rectangle object special cases
-			if (img2.rows <= 1 || img2.cols <= 1) {
-				if (img2.cols > 1) {
-					row += img2.rows;
-					resize(img2, img2, Size(), 0.5, 1, INTER_AREA);
-					img2.copyTo(mipmap(cv::Rect(img.cols, row, img2.cols, img2.rows)));
-				} else if (img2.rows > 1) {
-					row += img2.rows;
-					resize(img2, img2, Size(), 1, 0.5, INTER_AREA);
-					img2.copyTo(mipmap(cv::Rect(img.cols, row, img2.cols, img2.rows)));
-				}
+			if (img2.rows <= 1 ) {
 				ydone = true;
 				if (img2.rows <= 1 && img2.cols <= 1) {
 					xdone = true;
 				}
+			} else if (img2.rows <= 1 && img2.cols <= 1) {
+				xdone = true;
 			} else {
 				row += img2.rows;
 				tmpcol = img2.cols;
