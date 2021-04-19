@@ -4,7 +4,6 @@
 #include <unordered_map>
 
 #include "MIFbtf.hpp"
-#include "Image.hpp"
 
 #include "opencv2/core.hpp"
 #include "opencv2/highgui.hpp"
@@ -12,8 +11,7 @@
 #include "pugixml.hpp"
 
 using namespace mif;
-using namespace mif::directions;
-using namespace mif::mipmap;
+
 #include "TBIG.h"
 
 
@@ -59,29 +57,30 @@ string filtToString(Filtering d) {
 	}
 }
 
-void createMipMapWithInfo(shared_ptr<float>& data, const int& rows, const int& cols, shared_ptr<float>& output, Mipmap & mip) {
+void createMipMapWithInfo(shared_ptr<float>& data, const int& rows, const int& cols, shared_ptr<float>& output, std::vector<ElementMipmapItem>& mip) {
 	Mat img = Mat(rows, cols, CV_32FC3, data.get());
 	Mat mipmap = Mat::zeros(Size(((img.cols) * 3 / 2)+1, img.rows), CV_32FC3);
 	img.copyTo(mipmap(cv::Rect(0, 0, img.cols, img.rows)));
 	int row = 0;
+	mip.push_back(ElementMipmapItem(0,0, 0, img.cols, img.rows));
 	int level = 1;
-	mip.isotropic.push_back(Item(0,0, img.cols, img.rows));
+	
 	while (true) {
 		Mat img2;
 		resize(img, img2, Size(), pow(0.5,level), pow(0.5, level), INTER_AREA);
-		mip.isotropic.push_back(Item(img.cols, row, img2.cols, img2.rows));
+		mip.push_back(ElementMipmapItem(level,img.cols, row, img2.cols, img2.rows));
 		img2.copyTo(mipmap(cv::Rect(img.cols, row, img2.cols, img2.rows)));
 		//handle rectangle object special cases
 		if (img2.rows <= 1 || img2.cols <= 1) {
 			if (img2.cols > 1) {
 				row += img2.rows;
 				resize(img2, img2, Size(), 0.5, 1, INTER_AREA);
-				mip.isotropic.push_back(Item(img.cols, row, img2.cols, img2.rows));
+				mip.push_back(ElementMipmapItem(level+1,img.cols, row, img2.cols, img2.rows));
 				img2.copyTo(mipmap(cv::Rect(img.cols, row, img2.cols, img2.rows)));
 			} else if (img2.rows > 1) {
 				row += img2.rows;
 				resize(img2, img2, Size(), 1, 0.5, INTER_AREA);
-				mip.isotropic.push_back(Item(img.cols, row, img2.cols, img2.rows));
+				mip.push_back(ElementMipmapItem(level + 1,img.cols, row, img2.cols, img2.rows));
 				img2.copyTo(mipmap(cv::Rect(img.cols, row, img2.cols, img2.rows)));
 			}
 			break;
@@ -142,10 +141,10 @@ void createMipMap(shared_ptr<float>& data, const int& rows, const int& cols, sha
 }
 
 
-void createAnisoMapWithInfo(shared_ptr<float>& data, const int& rows, const int& cols, shared_ptr<float>& output, Mipmap& mip) {
+void createAnisoMapWithInfo(shared_ptr<float>& data, const int& rows, const int& cols, shared_ptr<float>& output, image::Image<ElementMipmapItem>& mip) {
 	Mat img = Mat(rows, cols, CV_32FC3, data.get());
 	Mat mipmap = Mat::zeros(Size(2 * img.cols + 1, 2 * img.rows + 1), CV_32FC3);
-	mip.anisotropic.resize(ceil(log2f(rows)), ceil(log2f(cols)));
+	mip.resize(ceil(log2f(rows)), ceil(log2f(cols)));
 	int levelxCnt = ceil(log2f(cols));
 	bool xdone = false;
 	int col = 0;
@@ -157,9 +156,9 @@ void createAnisoMapWithInfo(shared_ptr<float>& data, const int& rows, const int&
 			Mat img2;
 			resize(img, img2, Size(), pow(0.5, levelx), pow(0.5, levely), INTER_AREA);
 			img2.copyTo(mipmap(cv::Rect(col, row, img2.cols, img2.rows)));
-			if ((levelx + levely * levelxCnt) >= mip.anisotropic.size()) {
-				mip.anisotropic.clear();
-				mip.anisotropic.resize(ceil(log2f(rows)+1), ceil(log2f(cols)+1));
+			if ((levelx + levely * levelxCnt) >= mip.size()) {
+				mip.clear();
+				mip.resize(ceil(log2f(rows)+1), ceil(log2f(cols)+1));
 				levelxCnt = ceil(log2f(cols)+1);
 				levely = -1;
 				levelx = 0;
@@ -167,7 +166,7 @@ void createAnisoMapWithInfo(shared_ptr<float>& data, const int& rows, const int&
 				row = 0;
 				continue;
 			}
-			mip.anisotropic[levelx  + levely * levelxCnt] = Item(col, row, img2.cols, img2.rows);
+			mip(levely,levelx) = ElementMipmapItem(levelx, levely,col, row, img2.cols, img2.rows);
 
 			//handle rectangle object special cases
 			if (img2.rows <= 1 || img2.cols <= 1) {
@@ -266,7 +265,8 @@ void checkFilename(std::string filename) {
 
 void controlReading(std::string filename) {
 	MIFbtf mif(filename,true);
-	std::cout<<"BTF name" <<mif.getBtfName("btf0")<<std::endl;
+	auto btf = mif.getBtf("btf0");
+	std::cout<<"BTF name" <<btf.getName()<<std::endl;
 	printf("height,width: %d %d\n", mif.getImageHeight(0), mif.getImageWidth(0));
 	printf("images,planes: %d %d\n", mif.getNumberOfImages(), mif.getImageNumberOfPlanes(0));
 	string xmlFilename = filename.substr(0, filename.size() - 3) + "xml";
@@ -296,20 +296,15 @@ void convertUniform(std::string & filename, Filtering& filt) {
 		uint64_t rows= nr;
 		checkFilename(filename);
 		MIFbtf mif(filename);
-		mif.addBtfElement("btf0", distToString(Distribution::uniform));
-		Directions directions;
-		directions.type = Directions::Type::list;
-		directions.name = distToString(Distribution::uniform);
-		directions.attributes = { { "stepTheta", "15" },{"stepPhi","30" } };
-		Mipmap mip;
+		//mif.addBtfElement("btf0", distToString(Distribution::uniform));
+		ElementBtf btf("btf0", distToString(Distribution::uniform), "", "", "", "");
+		std::vector<ElementDirectionsItem> dirItems;
 		if (filt == Filtering::isotropy) {
 			cols = (nc * 3 / 2) + 1;
-			mip.type = Mipmap::Type::isotropic;
 		}
 		if (filt == Filtering::anisotropy) {
 			rows = 2 * nr + 1;
 			cols = 2 * nc + 1;
-			mip.type = Mipmap::Type::anisotropic;
 		}
 
 		uint64_t n = nr * nc * 3;
@@ -320,7 +315,8 @@ void convertUniform(std::string & filename, Filtering& filt) {
 		for (int i = 0; i < NoOfImages; i++)
 		{
 			T.get_angles(i, angles);
-			directions.listRecords.push_back({ Direction(Type::source, angles[0], angles[1]), Direction(Type::sensor,angles[2], angles[3]) });
+			dirItems.push_back(ElementDirectionsItem(i, { ElementDirection(0, DirectionType::source, static_cast<double>(angles[0]), static_cast<double>(angles[1])),
+				ElementDirection(1, DirectionType::sensor, static_cast<double>(angles[2]), static_cast<double>(angles[3])) }));
 			for (int y = 0; y < nr; y++)
 				for (int x = 0; x < nc; x++)
 				{
@@ -332,8 +328,11 @@ void convertUniform(std::string & filename, Filtering& filt) {
 			if (filt == Filtering::isotropy) {
 				uint64_t n = nr * cols * 3;
 				std::shared_ptr<float> mipmap{ new float[n], [](float* p) {delete[] p; } };
-				if (i == 0)
+				if (i == 0) {
+					std::vector<ElementMipmapItem> mip;
 					createMipMapWithInfo(data, nr, nc, mipmap, mip);
+					btf.setMipmap(ElementMipmap(mip));
+				}
 				else
 					createMipMap(data, nr, nc, mipmap);
 				image::Image<float> img(mipmap.get(), nr, cols, 3);
@@ -342,8 +341,11 @@ void convertUniform(std::string & filename, Filtering& filt) {
 			} else if (filt == Filtering::anisotropy) {
 				uint64_t n = rows * cols * 3;
 				std::shared_ptr<float> arrmip{ new float[n], [](float* p) {delete[] p; } };
-				if (i == 0)
+				if (i == 0) {
+					image::Image<ElementMipmapItem> mip;
 					createAnisoMapWithInfo(data, nr, nc, arrmip, mip);
+					btf.setMipmap(ElementMipmap(mip));
+				}
 				else
 					createAnisoMap(data, nr, nc, arrmip);
 				image::Image<float> img(arrmip.get(), rows, cols, 3);
@@ -356,11 +358,12 @@ void convertUniform(std::string & filename, Filtering& filt) {
 
 
 		}
-		if (filt == Filtering::isotropy || filt == Filtering::anisotropy) {
-			mif.addBtfMipmap("btf0", mip);
-		}
-		mif.addBtfDirectionsReference("btf0", "directions0", directions);
-		mif.addDirections("directions0", directions);
+
+		ElementDirections directions("directions0", dirItems);
+		directions.setNameUniform(15.0, 30.0);
+		btf.setDirections(directions);
+		mif.setBtf(btf);
+		mif.setDirections(directions);
 		mif.saveXML();
 
 	}
@@ -389,23 +392,18 @@ void convertUBO(std::string& filename, Filtering& filt) {
 	{
 		int cols = nc;
 		int rows = nr;
-		Mipmap mip;
 		
-		if (filt == Filtering::isotropy) {
-			cols = (nc * 3 / 2) + 1;
-			mip.type = Mipmap::Type::isotropic;
-		}
-		if (filt == Filtering::anisotropy) {
-			rows = 2* nr + 1;
-			cols = 2* nc  + 1;
-			mip.type = Mipmap::Type::anisotropic;
-		}
 		checkFilename(filename);
 		MIFbtf mif(filename);
-		mif.addBtfElement("btf0", distToString(Distribution::UBO));
-		Directions directions;
-		directions.type = Directions::Type::list;
-		directions.name = distToString(Distribution::UBO);
+		ElementBtf btf("btf0", distToString(Distribution::UBO), "", "", "", "");
+		std::vector<ElementDirectionsItem> dirItems;
+		if (filt == Filtering::isotropy) {
+			cols = (nc * 3 / 2) + 1;
+		}
+		if (filt == Filtering::anisotropy) {
+			rows = 2 * nr + 1;
+			cols = 2 * nc + 1;
+		}
 
 		
 		uint64_t n = nr * nc * 3;
@@ -421,7 +419,8 @@ void convertUBO(std::string& filename, Filtering& filt) {
 			for (int i = 0; i < nillu; i++)
 			{
 				T.get_angles(k, angles);
-				directions.listRecords.push_back({ Direction(Type::source, angles[0], angles[1]), Direction(Type::sensor,angles[2], angles[3]) });
+				dirItems.push_back(ElementDirectionsItem(k, { ElementDirection(0, DirectionType::source, static_cast<double>(angles[0]), static_cast<double>(angles[1])),
+				ElementDirection(1, DirectionType::sensor, static_cast<double>(angles[2]), static_cast<double>(angles[3])) }));
 				int idx = v * nillu + i;
 				for (int y = 0; y < nr; y++)
 					for (int x = 0; x < nc; x++)
@@ -434,8 +433,11 @@ void convertUBO(std::string& filename, Filtering& filt) {
 				if (filt == Filtering::isotropy) {
 					uint64_t n = nr * cols * 3;
 					std::shared_ptr<float> arrmip{ new float[n], [](float* p) {delete[] p; } };
-					if (k == 0)
+					if (k == 0) {
+						std::vector<ElementMipmapItem> mip;
 						createMipMapWithInfo(data, nr, nc, arrmip, mip);
+						btf.setMipmap(ElementMipmap(mip));
+					}
 					else
 						createMipMap(data, nr, nc, arrmip);
 					image::Image<float> img(arrmip.get(), nr, cols, 3);
@@ -443,8 +445,11 @@ void convertUBO(std::string& filename, Filtering& filt) {
 				} else if (filt == Filtering::anisotropy) {
 					uint64_t n = rows * cols * 3;
 					std::shared_ptr<float> arrmip{ new float[n], [](float* p) {delete[] p; } };
-					if (k == 0) 
+					if (k == 0) {
+						image::Image<ElementMipmapItem> mip;
 						createAnisoMapWithInfo(data, nr, nc, arrmip, mip);
+						btf.setMipmap(ElementMipmap(mip));
+					}
 					else
 						createAnisoMap(data, nr, nc, arrmip);
 					image::Image<float> img(arrmip.get(),rows, cols, 3);
@@ -456,12 +461,11 @@ void convertUBO(std::string& filename, Filtering& filt) {
 				k++;
 			}
 
-		mif.addBtfDirectionsReference("btf0", "directions0", directions);
-		mif.addDirections("directions0", directions);
-		if (filt == Filtering::isotropy || filt == Filtering::anisotropy) {
-			mif.addBtfMipmap("btf0", mip);
-		}
-
+		ElementDirections directions("directions0", dirItems);
+		directions.setNameUBO81x81();
+		btf.setDirections(directions);
+		mif.setBtf(btf);
+		mif.setDirections(directions);
 		//save xml to MIF
 		mif.saveXML();
 		std::cout << mif.getXML() << std::endl;
@@ -489,24 +493,16 @@ void convertthtd(std::string &filename, Filtering& filt) {
 	{
 		int cols = nc;
 		int rows = nr;
-		if (filt == Filtering::isotropy)
-			cols = (nc * 3 / 2) + 1;
 		checkFilename(filename);
 		MIFbtf mif(filename);
-		mif.addBtfElement("btf0", distToString(Distribution::BTFthtd));
-		Directions directions;
-		directions.type = Directions::Type::list;
-		directions.name = distToString(Distribution::BTFthtd);
-
-		Mipmap mip;
+		ElementBtf btf("btf0", distToString(Distribution::BTFthtd), "", "", "", "");
+		std::vector<ElementDirectionsItem> dirItems;
 		if (filt == Filtering::isotropy) {
 			cols = (nc * 3 / 2) + 1;
-			mip.type = Mipmap::Type::isotropic;
 		}
 		if (filt == Filtering::anisotropy) {
 			rows = 2 * nr + 1;
 			cols = 2 * nc + 1;
-			mip.type = Mipmap::Type::anisotropic;
 		}
 		uint64_t n = nr * nc * 3;
 		std::shared_ptr<float> data{ new float[n], [](float* p) {delete[] p; } };
@@ -516,7 +512,8 @@ void convertthtd(std::string &filename, Filtering& filt) {
 		for (int i = 0; i < NoOfImages; i++)
 		{
 			T.get_angles(i, angles);
-			directions.listRecords.push_back({ Direction(Type::source, angles[0], angles[1]), Direction(Type::sensor,angles[2], angles[3]) });
+			dirItems.push_back(ElementDirectionsItem(i, { ElementDirection(0, DirectionType::source, static_cast<double>(angles[0]), static_cast<double>(angles[1])),
+				ElementDirection(1, DirectionType::sensor, static_cast<double>(angles[2]), static_cast<double>(angles[3])) }));
 			for (int y = 0; y < nr; y++)
 				for (int x = 0; x < nc; x++)
 				{
@@ -527,8 +524,11 @@ void convertthtd(std::string &filename, Filtering& filt) {
 			if (filt == Filtering::isotropy) {
 				uint64_t n = nr * cols * 3;
 				std::shared_ptr<float> mipmap{ new float[n], [](float* p) {delete[] p; } };
-				if (i == 0)
+				if (i == 0) {
+					std::vector<ElementMipmapItem> mip;
 					createMipMapWithInfo(data, nr, nc, mipmap, mip);
+					btf.setMipmap(ElementMipmap(mip));
+				}
 				else
 					createMipMap(data, nr, nc, mipmap);
 				image::Image<float> img(mipmap.get(), nr, cols, 3);
@@ -536,8 +536,11 @@ void convertthtd(std::string &filename, Filtering& filt) {
 			} else if (filt == Filtering::anisotropy) {
 				uint64_t n = rows * cols * 3;
 				std::shared_ptr<float> arrmip{ new float[n], [](float* p) {delete[] p; } };
-				if (i == 0)
+				if (i == 0) {
+					image::Image<ElementMipmapItem> mip;
 					createAnisoMapWithInfo(data, nr, nc, arrmip, mip);
+					btf.setMipmap(ElementMipmap(mip));
+				}
 				else
 					createAnisoMap(data, nr, nc, arrmip);
 				image::Image<float> img(arrmip.get(), rows, cols, 3);
@@ -547,12 +550,12 @@ void convertthtd(std::string &filename, Filtering& filt) {
 				mif.addImage(i, img);
 			}
 		}
-		mif.addBtfDirectionsReference("btf0", "directions0", directions);
-		mif.addDirections("directions0", directions);
-		if (filt == Filtering::isotropy || filt == Filtering::anisotropy) {
-			mif.addBtfMipmap("btf0", mip);
-		}
 
+		ElementDirections directions("directions0", dirItems);
+		directions.setNameCoatingRegular(5.0, 15.0);
+		btf.setDirections(directions);
+		mif.setBtf(btf);
+		mif.setDirections(directions);
 		//save xml to MIF
 		mif.saveXML();
 		std::cout << mif.getXML() << std::endl;
@@ -579,24 +582,16 @@ void convertthph(std::string &filename, Filtering& filt) {
 	{
 		int cols = nc;
 		int rows = nr;
-		if (filt == Filtering::isotropy)
-			cols = (nc * 3 / 2) + 1;
 		checkFilename(filename);
 		MIFbtf mif(filename);
-		mif.addBtfElement("btf0", distToString(Distribution::BTFthph));
-		Directions directions;
-		directions.type = Directions::Type::list;
-		directions.name = distToString(Distribution::BTFthph);
-
-		Mipmap mip;
+		ElementBtf btf("btf0", distToString(Distribution::BTFthtd), "", "", "", "");
+		std::vector<ElementDirectionsItem> dirItems;
 		if (filt == Filtering::isotropy) {
 			cols = (nc * 3 / 2) + 1;
-			mip.type = Mipmap::Type::isotropic;
 		}
 		if (filt == Filtering::anisotropy) {
 			rows = 2 * nr + 1;
 			cols = 2 * nc + 1;
-			mip.type = Mipmap::Type::anisotropic;
 		}
 		uint64_t n = nr * nc * 3;
 		std::shared_ptr<float> data{ new float[n], [](float* p) {delete[] p; } };
@@ -606,7 +601,8 @@ void convertthph(std::string &filename, Filtering& filt) {
 		for (int i = 0; i < NoOfImages; i++)
 		{
 			T.get_angles(i, angles);
-			directions.listRecords.push_back({ Direction(Type::source, angles[0], angles[1]), Direction(Type::sensor,angles[2], angles[3]) });
+			dirItems.push_back(ElementDirectionsItem(i, { ElementDirection(0, DirectionType::source, static_cast<double>(angles[0]), static_cast<double>(angles[1])),
+				ElementDirection(1, DirectionType::sensor, static_cast<double>(angles[2]), static_cast<double>(angles[3])) }));
 			for (int y = 0; y < nr; y++)
 				for (int x = 0; x < nc; x++)
 				{
@@ -617,8 +613,11 @@ void convertthph(std::string &filename, Filtering& filt) {
 			if (filt == Filtering::isotropy) {
 				uint64_t n = nr * cols * 3;
 				std::shared_ptr<float> mipmap{ new float[n], [](float* p) {delete[] p; } };
-				if (i == 0)
+				if (i == 0) {
+					std::vector<ElementMipmapItem> mip;
 					createMipMapWithInfo(data, nr, nc, mipmap, mip);
+					btf.setMipmap(ElementMipmap(mip));
+				}
 				else
 					createMipMap(data, nr, nc, mipmap);
 				image::Image<float> img(mipmap.get(), nr, cols, 3);
@@ -626,8 +625,11 @@ void convertthph(std::string &filename, Filtering& filt) {
 			} else if (filt == Filtering::anisotropy) {
 				uint64_t n = rows * cols * 3;
 				std::shared_ptr<float> arrmip{ new float[n], [](float* p) {delete[] p; } };
-				if (i == 0)
+				if (i == 0) {
+					image::Image<ElementMipmapItem> mip;
 					createAnisoMapWithInfo(data, nr, nc, arrmip, mip);
+					btf.setMipmap(ElementMipmap(mip));
+				}
 				else
 					createAnisoMap(data, nr, nc, arrmip);
 				image::Image<float> img(arrmip.get(), rows, cols, 3);
@@ -637,11 +639,11 @@ void convertthph(std::string &filename, Filtering& filt) {
 				mif.addImage(i, img);
 			}
 		}
-		mif.addBtfDirectionsReference("btf0", "directions0", directions);
-		mif.addDirections("directions0", directions);
-		if (filt == Filtering::isotropy || filt == Filtering::anisotropy) {
-			mif.addBtfMipmap("btf0", mip);
-		}
+		ElementDirections directions("directions0", dirItems);
+		directions.setNameCoatingSpecial(5.0,30.0);
+		btf.setDirections(directions);
+		mif.setBtf(btf);
+		mif.setDirections(directions);
 
 		//save xml to MIF
 		mif.saveXML();
