@@ -352,3 +352,18 @@ MigrationBackup/
 # Ionide (cross platform F# VS Code tools) working folder
 .ionide/
 output.xml
+ace001.mif
+ace001.xml
+anisotropy.png
+fabric106_uniform.xml
+MAM2014_007.mif
+MAM2014_007.xml
+MAM2014_016.xml
+paints/schlenk075_BTFthph.mif
+paints/schlenk075_BTFthph.xml
+paints/schlenk075_BTFthtd.mif
+paints/schlenk075_BTFthtd.xml
+paints/schlenk082_BTFthph.mif
+paints/schlenk082_BTFthph.xml
+paints/schlenk082_BTFthtd.mif
+paints/schlenk082_BTFthtd.xml

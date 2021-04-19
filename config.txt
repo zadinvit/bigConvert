@@ -1,3 +1,9 @@
 distribution: UBO81
-filtering: anisotropy
-MAM2014_016 UBO81x81
+filtering: none
+fabric106_uniform Uniform
+ace001 UBO81x81
+paints/schlenk075_BTFthtd CoatingRegular
+paints/schlenk075_BTFthph CoatingSpecial
+
+
+
