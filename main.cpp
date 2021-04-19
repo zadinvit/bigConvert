@@ -17,9 +17,9 @@ using namespace mif;
 
 using namespace cv;
 
-
+//enum class diffrent types of interpolating, diffrent angels, important in renderer
 enum class Distribution { uniform, UBO, BTFthtd, BTFthph, none };
-static std::unordered_map<std::string, Distribution > const table = { {"uniform",Distribution::uniform}, {"UBO81x81",Distribution::UBO}, {"CoatingRegular", Distribution::BTFthtd}, {"CoatingSpecial", Distribution::BTFthph} };
+static std::unordered_map<std::string, Distribution > const table = { {"Uniform",Distribution::uniform}, {"UBO81x81",Distribution::UBO}, {"CoatingRegular", Distribution::BTFthtd}, {"CoatingSpecial", Distribution::BTFthph} };
 Distribution parse(std::string str) {
 	auto it = table.find(str);
 	if (it != table.end())
@@ -37,7 +37,12 @@ string distToString(Distribution d) {
 	}
 }
 
-
+/*enum class diffrent types of filtering -
+isotropy- standart mipmapping size of file 1,5*old
+anisotropy - anisotropy mipmap size of file 4*old
+not - no filtering, just read image for old file and save to new size of file old = new 
+none - bad format 
+*/
 enum class Filtering { isotropy, anisotropy, not, none };
 static std::unordered_map<std::string, Filtering > const table2 = { {"mipmap",Filtering::isotropy}, {"anisotropy",Filtering::anisotropy}, {"none",Filtering::not} };
 Filtering parseFiltering(std::string str) {
@@ -189,7 +194,7 @@ void createAnisoMapWithInfo(shared_ptr<float>& data, const int& rows, const int&
 	}
 	/*mipmap.convertTo(img, CV_32FC3, 1 / 255.0);
 	imwrite("anisotropy.png", mipmap);*/
-
+	//convert to shared_ptr<float>
 	for (int i = 0; i < mipmap.rows; i++)
 	{
 		const float* Mi = mipmap.ptr<float>(i);
@@ -246,7 +251,7 @@ void createAnisoMap(shared_ptr<float>& data, const int& rows, const int& cols, s
 	}
 }
 
-
+//if mif file exist delete it, before creating new
 void checkFilename(std::string filename) {
 	FILE* fp = fopen(filename.c_str(), "r");
 	if (fp) {
@@ -255,7 +260,7 @@ void checkFilename(std::string filename) {
 	}
 }
 
-
+//read data from new format and write into console
 void controlReading(std::string filename) {
 	MIFbtf mif(filename,true);
 	auto btf = mif.getBtf("btf0");
@@ -267,42 +272,49 @@ void controlReading(std::string filename) {
 	std::cout << "control XML save to: " << xmlFilename<< std::endl;
 }
 
-void convertUniform(std::string & filename, Filtering& filt) {
-	TBIG T;
-	//printf("start\n");
+void loadOldBIG(TBIG &T, std::string& filename, int &nr,int & nc, int &NoOfImages) {
 	std::string lFilename = filename + ".big";
 	int status = T.load(lFilename.c_str(), true, 10000000000000); // true = memory, false = disk
 	if (status < 0) {
 		std::cout << "Open BIG file failed. File name: " << filename << std::endl;
 		return;
 	}
-	int NoOfImages = T.get_images();
-	int nr = T.get_height();
-	int nc = T.get_width();
+	NoOfImages = T.get_images();
+	nr = T.get_height();
+	nc = T.get_width();
 	printf("height,width: %d %d\n", nr, nc);
-	//T.report();
 	printf("loading bigBTF...done\n");
+}
+
+void initMipColsAndRows(uint64_t& cols, uint64_t& rows, int& nc, int& nr, Filtering& filt) {
+	if (filt == Filtering::isotropy) {
+		cols = (nc * 3 / 2) + 1;
+	}
+	if (filt == Filtering::anisotropy) {
+		rows = 2 * nr + 1;
+		cols = 2 * nc + 1;
+	}
+}
+
+//convert old big file to mif file with uniform indexing
+void convertUniform(std::string & filename, Filtering& filt) {
+	TBIG T;
+	int nr, nc, NoOfImages;
+	loadOldBIG(T, filename, nr, nc, NoOfImages);
+	
 	filename += ".mif";
-	// creating new BIG -------------
+	// creating new MIF -------------
 	{
-		uint64_t cols = nc;
-		uint64_t rows= nr;
 		checkFilename(filename);
 		MIFbtf mif(filename);
-		//mif.addBtfElement("btf0", distToString(Distribution::uniform));
 		ElementBtf btf("btf0", distToString(Distribution::uniform), "", "", "", "");
 		std::vector<ElementDirectionsItem> dirItems;
-		if (filt == Filtering::isotropy) {
-			cols = (nc * 3 / 2) + 1;
-		}
-		if (filt == Filtering::anisotropy) {
-			rows = 2 * nr + 1;
-			cols = 2 * nc + 1;
-		}
-
+		uint64_t cols = nc;
+		uint64_t rows = nr;
+		initMipColsAndRows(cols, rows, nc,nr, filt);
 		uint64_t n = nr * nc * 3;
 		std::shared_ptr<float> data{ new float[n], [](float* p) {delete[] p; } };
-		// filling new BIG from old BIG --------------------
+		// filling new MIF from old BIG --------------------
 		float RGB[3];
 		float angles[12];
 		for (int i = 0; i < NoOfImages; i++)
@@ -330,7 +342,6 @@ void convertUniform(std::string & filename, Filtering& filt) {
 					createMipMap(data, nr, nc, mipmap);
 				image::Image<float> img(mipmap.get(), nr, cols, 3);
 				mif.addImage(i, img);
-				//bigW.pushEntity(mipmap, big::DataTypes::FLOAT);
 			} else if (filt == Filtering::anisotropy) {
 				uint64_t n = rows * cols * 3;
 				std::shared_ptr<float> arrmip{ new float[n], [](float* p) {delete[] p; } };
@@ -344,65 +355,44 @@ void convertUniform(std::string & filename, Filtering& filt) {
 				image::Image<float> img(arrmip.get(), rows, cols, 3);
 				mif.addImage(i, img);
 			} else {
-				//bigW.pushEntity(data, big::DataTypes::FLOAT);
 				image::Image<float> img(data.get(), nr, nc, 3);
 				mif.addImage(i, img);
 			}
-
-
 		}
-
 		ElementDirections directions("directions0", dirItems);
 		directions.setNameUniform(15.0, 30.0);
 		btf.setDirections(directions);
 		mif.setBtf(btf);
 		mif.setDirections(directions);
 		mif.saveXML();
-
 	}
 
 	// control reading ------------------------------------
 	controlReading(filename);
 }
 
+//convert old big file to mif file with UBO indexing
 void convertUBO(std::string& filename, Filtering& filt) {
 	std::string lFilename = filename + ".big";
 	// loading old BIG --------------
 	TBIG T;
-	int status = T.load(lFilename.c_str(), true, 10000000000000); // true = memory, false = disk
-	if (status < 0) {
-		std::cout << "Open BIG file failed. File name: " << filename << std::endl;
-		return;
-	}
-	int NoOfImages = T.get_images();
-	int nr = T.get_height();
-	int nc = T.get_width();
-	printf("height,width: %d %d\n", nr, nc);
-	//T.report();
-	printf("loading bigBTF...done\n");
+	int nr, nc, NoOfImages;
+	loadOldBIG(T,filename, nr, nc, NoOfImages);
 	filename += ".mif";
 	// creating new BIG -------------
 	{
-		int cols = nc;
-		int rows = nr;
-		
 		checkFilename(filename);
 		MIFbtf mif(filename);
 		ElementBtf btf("btf0", distToString(Distribution::UBO), "", "", "", "");
 		std::vector<ElementDirectionsItem> dirItems;
-		if (filt == Filtering::isotropy) {
-			cols = (nc * 3 / 2) + 1;
-		}
-		if (filt == Filtering::anisotropy) {
-			rows = 2 * nr + 1;
-			cols = 2 * nc + 1;
-		}
+		uint64_t cols = nc;
+		uint64_t rows = nr;
+		initMipColsAndRows(cols, rows, nc, nr, filt);
 
-		
 		uint64_t n = nr * nc * 3;
 
 		std::shared_ptr<float> data{ new float[n], [](float* p) {delete[] p; } };
-		// filling new BIG from old BIG --------------------
+		// filling new MIF from old BIG --------------------
 		int nillu = 81;
 		int nview = 81;
 		float angles[12];
@@ -466,40 +456,24 @@ void convertUBO(std::string& filename, Filtering& filt) {
 	// control reading ------------------------------------
 	controlReading(filename);
 }
-
+//convert old big file to mif file with thtd indexing
 void convertthtd(std::string &filename, Filtering& filt) {
 	TBIG T;
-	std::string lFilename = filename + ".big";
-	int status = T.load(lFilename.c_str(), true); // true = memory, false = disk
-	if (status < 0) {
-		std::cout << "Open BIG file failed. File name: " << filename << std::endl;
-		return;
-	}
-	int NoOfImages = T.get_images();
-	int nr = T.get_height();
-	int nc = T.get_width();
-	printf("height,width: %d %d\n", nr, nc);
-	//T.report();
-	printf("loading bigBTF...done\n");
+	int nr, nc, NoOfImages;
+	loadOldBIG(T, filename, nr, nc, NoOfImages);
 	filename += ".mif";
 	// creating new BIG -------------
 	{
-		int cols = nc;
-		int rows = nr;
 		checkFilename(filename);
 		MIFbtf mif(filename);
 		ElementBtf btf("btf0", distToString(Distribution::BTFthtd), "", "", "", "");
 		std::vector<ElementDirectionsItem> dirItems;
-		if (filt == Filtering::isotropy) {
-			cols = (nc * 3 / 2) + 1;
-		}
-		if (filt == Filtering::anisotropy) {
-			rows = 2 * nr + 1;
-			cols = 2 * nc + 1;
-		}
+		uint64_t cols = nc;
+		uint64_t rows = nr;
+		initMipColsAndRows(cols, rows, nc, nr, filt);
 		uint64_t n = nr * nc * 3;
 		std::shared_ptr<float> data{ new float[n], [](float* p) {delete[] p; } };
-		// filling new BIG from old BIG --------------------
+		// filling new MIF from old BIG --------------------
 		float angles[12];
 		float RGB[3];
 		for (int i = 0; i < NoOfImages; i++)
@@ -556,36 +530,23 @@ void convertthtd(std::string &filename, Filtering& filt) {
 	}
 
 }
+
+//convert old big file to mif file with thph indexing
 void convertthph(std::string &filename, Filtering& filt) {
 	TBIG T;
 	std::string lFilename = filename + ".big";
-	int status = T.load(lFilename.c_str(), true); // true = memory, false = disk
-	if (status < 0) {
-		std::cout << "Open BIG file failed. File name: " << filename << std::endl;
-		return;
-	}
-	int NoOfImages = T.get_images();
-	int nr = T.get_height();
-	int nc = T.get_width();
-	printf("height,width: %d %d\n", nr, nc);
-	//T.report();
-	printf("loading bigBTF...done\n");
+	int nr, nc, NoOfImages;
+	loadOldBIG(T, filename, nr, nc, NoOfImages);
 	filename += ".mif";
 	// creating new BIG -------------
 	{
-		int cols = nc;
-		int rows = nr;
 		checkFilename(filename);
 		MIFbtf mif(filename);
 		ElementBtf btf("btf0", distToString(Distribution::BTFthtd), "", "", "", "");
 		std::vector<ElementDirectionsItem> dirItems;
-		if (filt == Filtering::isotropy) {
-			cols = (nc * 3 / 2) + 1;
-		}
-		if (filt == Filtering::anisotropy) {
-			rows = 2 * nr + 1;
-			cols = 2 * nc + 1;
-		}
+		uint64_t cols = nc;
+		uint64_t rows = nr;
+		initMipColsAndRows(cols, rows, nc, nr, filt);
 		uint64_t n = nr * nc * 3;
 		std::shared_ptr<float> data{ new float[n], [](float* p) {delete[] p; } };
 		// filling new BIG from old BIG --------------------
@@ -603,7 +564,7 @@ void convertthph(std::string &filename, Filtering& filt) {
 					for (int isp = 0; isp < 3; isp++)
 						data.get()[y * nc * 3 + x * 3 + isp] = RGB[isp];
 				}
-			if (filt == Filtering::isotropy) {
+			if (filt == Filtering::isotropy) { //create mipmap 1,5x bigger size of image 
 				uint64_t n = nr * cols * 3;
 				std::shared_ptr<float> mipmap{ new float[n], [](float* p) {delete[] p; } };
 				if (i == 0) {
@@ -615,7 +576,7 @@ void convertthph(std::string &filename, Filtering& filt) {
 					createMipMap(data, nr, nc, mipmap);
 				image::Image<float> img(mipmap.get(), nr, cols, 3);
 				mif.addImage(i, img);
-			} else if (filt == Filtering::anisotropy) {
+			} else if (filt == Filtering::anisotropy) { //create anisotropic map 4x bigger image 
 				uint64_t n = rows * cols * 3;
 				std::shared_ptr<float> arrmip{ new float[n], [](float* p) {delete[] p; } };
 				if (i == 0) {
