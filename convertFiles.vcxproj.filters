@@ -27,9 +27,6 @@
     <ClCompile Include="TBIG.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="pugixml.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="lodepng.h">
@@ -45,12 +42,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="half.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="pugixml.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="pugiconfig.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

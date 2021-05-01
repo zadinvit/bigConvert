@@ -8,7 +8,6 @@
 #include "opencv2/core.hpp"
 #include "opencv2/highgui.hpp"
 #include "opencv2/imgproc.hpp"
-#include "pugixml.hpp"
 
 using namespace mif;
 
@@ -94,6 +93,9 @@ void createMipMapWithInfo(shared_ptr<float>& data, const int& rows, const int& c
 		level++;
 
 	}
+
+	/*mipmap.convertTo(img, CV_32FC3, 1 / 255.0);
+	imwrite("mipmap.png", mipmap);*/
 	for (int i = 0; i < mipmap.rows; i++)
 	{
 		const float* Mi = mipmap.ptr<float>(i);
@@ -272,18 +274,28 @@ void controlReading(std::string filename) {
 	std::cout << "control XML save to: " << xmlFilename<< std::endl;
 }
 
-void loadOldBIG(TBIG &T, std::string& filename, int &nr,int & nc, int &NoOfImages) {
+bool loadOldBIG(TBIG &T, std::string& filename, int &nr,int & nc, int &NoOfImages) {
 	std::string lFilename = filename + ".big";
 	int status = T.load(lFilename.c_str(), true, 10000000000000); // true = memory, false = disk
 	if (status < 0) {
 		std::cout << "Open BIG file failed. File name: " << filename << std::endl;
-		return;
+		return false;
 	}
 	NoOfImages = T.get_images();
 	nr = T.get_height();
 	nc = T.get_width();
 	printf("height,width: %d %d\n", nr, nc);
 	printf("loading bigBTF...done\n");
+	return true;
+}
+
+ElementMaterial addMaterialInfoToMif(MIFbtf& mif, std::string &filename) {
+	ElementMaterial matInfo("btf0");
+	int start = max(filename.find_last_of("\\") + 1, filename.find_last_of("/") + 1);
+	int end = filename.find_last_of(".");
+	matInfo.setName(filename.substr(start, end - start));
+	mif.setMaterial(matInfo);
+	return matInfo;
 }
 
 void initMipColsAndRows(uint64_t& cols, uint64_t& rows, int& nc, int& nr, Filtering& filt) {
@@ -300,14 +312,15 @@ void initMipColsAndRows(uint64_t& cols, uint64_t& rows, int& nc, int& nr, Filter
 void convertUniform(std::string & filename, Filtering& filt) {
 	TBIG T;
 	int nr, nc, NoOfImages;
-	loadOldBIG(T, filename, nr, nc, NoOfImages);
+	if (!loadOldBIG(T, filename, nr, nc, NoOfImages))
+		return;
 	
 	filename += ".mif";
 	// creating new MIF -------------
 	{
 		checkFilename(filename);
 		MIFbtf mif(filename);
-		ElementBtf btf("btf0", distToString(Distribution::uniform), "", "", "", "");
+		ElementBtf btf("btf0", distToString(Distribution::uniform), addMaterialInfoToMif(mif,filename));
 		std::vector<ElementDirectionsItem> dirItems;
 		uint64_t cols = nc;
 		uint64_t rows = nr;
@@ -377,13 +390,14 @@ void convertUBO(std::string& filename, Filtering& filt) {
 	// loading old BIG --------------
 	TBIG T;
 	int nr, nc, NoOfImages;
-	loadOldBIG(T,filename, nr, nc, NoOfImages);
+	if (!loadOldBIG(T, filename, nr, nc, NoOfImages))
+		return;
 	filename += ".mif";
 	// creating new BIG -------------
 	{
 		checkFilename(filename);
 		MIFbtf mif(filename);
-		ElementBtf btf("btf0", distToString(Distribution::UBO), "", "", "", "");
+		ElementBtf btf("btf0", distToString(Distribution::UBO), addMaterialInfoToMif(mif, filename));
 		std::vector<ElementDirectionsItem> dirItems;
 		uint64_t cols = nc;
 		uint64_t rows = nr;
@@ -460,13 +474,14 @@ void convertUBO(std::string& filename, Filtering& filt) {
 void convertthtd(std::string &filename, Filtering& filt) {
 	TBIG T;
 	int nr, nc, NoOfImages;
-	loadOldBIG(T, filename, nr, nc, NoOfImages);
+	if (!loadOldBIG(T, filename, nr, nc, NoOfImages))
+		return;
 	filename += ".mif";
 	// creating new BIG -------------
 	{
 		checkFilename(filename);
 		MIFbtf mif(filename);
-		ElementBtf btf("btf0", distToString(Distribution::BTFthtd), "", "", "", "");
+		ElementBtf btf("btf0", distToString(Distribution::BTFthtd), addMaterialInfoToMif(mif, filename));
 		std::vector<ElementDirectionsItem> dirItems;
 		uint64_t cols = nc;
 		uint64_t rows = nr;
@@ -536,13 +551,14 @@ void convertthph(std::string &filename, Filtering& filt) {
 	TBIG T;
 	std::string lFilename = filename + ".big";
 	int nr, nc, NoOfImages;
-	loadOldBIG(T, filename, nr, nc, NoOfImages);
+	if (!loadOldBIG(T, filename, nr, nc, NoOfImages))
+		return;
 	filename += ".mif";
 	// creating new BIG -------------
 	{
 		checkFilename(filename);
 		MIFbtf mif(filename);
-		ElementBtf btf("btf0", distToString(Distribution::BTFthtd), "", "", "", "");
+		ElementBtf btf("btf0", distToString(Distribution::BTFthph), addMaterialInfoToMif(mif, filename));
 		std::vector<ElementDirectionsItem> dirItems;
 		uint64_t cols = nc;
 		uint64_t rows = nr;
