@@ -1,11 +1,13 @@
 
 **BigConvert**
+
 Use to convert old .big files to .mif files. 
-Tested with MIFlib version 0.4,[https://github.com/RadomirVavra/MIFlib](https://github.com/RadomirVavra/MIFlib)
+Tested with MIFlib version 0.4,[https://github.com/RadomirVavra/MIFlib](https://github.com/RadomirVavra/MIFlib). 
+Coverter us OpenCV library version 4.5.1. (https://opencv.org/opencv-4-5-1/) You must link this library to project. 
 
 Created by Vít Zadina. 
 
-Files to convert is specified in config.txt.
+Files to convert is specified in config.txt. Path to files is without .big extension. 
 
 **Config txt structure:**
 
