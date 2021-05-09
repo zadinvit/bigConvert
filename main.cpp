@@ -25,7 +25,7 @@
 
 using namespace mif;
 
-#include "TBIG.h"
+#include "ext/TBIG.h"
 
 
 using namespace cv;

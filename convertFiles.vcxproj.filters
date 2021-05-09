@@ -15,33 +15,36 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="lodepng.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="TAlloc.cpp">
+    <ClCompile Include="ext\lodepng.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="TBIG.cpp">
+    <ClCompile Include="ext\TAlloc.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ext\TBIG.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="lodepng.h">
+    <ClInclude Include="ext\common.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="readexr.h">
+    <ClInclude Include="ext\half.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="TAlloc.h">
+    <ClInclude Include="ext\lodepng.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="TBIG.h">
+    <ClInclude Include="ext\readexr.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="half.h">
+    <ClInclude Include="ext\TAlloc.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ext\TBIG.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

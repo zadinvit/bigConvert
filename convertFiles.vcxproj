@@ -149,17 +149,18 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="lodepng.cpp" />
+    <ClCompile Include="ext\lodepng.cpp" />
+    <ClCompile Include="ext\TAlloc.cpp" />
+    <ClCompile Include="ext\TBIG.cpp" />
     <ClCompile Include="main.cpp" />
-    <ClCompile Include="TAlloc.cpp" />
-    <ClCompile Include="TBIG.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="half.h" />
-    <ClInclude Include="lodepng.h" />
-    <ClInclude Include="readexr.h" />
-    <ClInclude Include="TAlloc.h" />
-    <ClInclude Include="TBIG.h" />
+    <ClInclude Include="ext\common.hpp" />
+    <ClInclude Include="ext\half.h" />
+    <ClInclude Include="ext\lodepng.h" />
+    <ClInclude Include="ext\readexr.h" />
+    <ClInclude Include="ext\TAlloc.h" />
+    <ClInclude Include="ext\TBIG.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
